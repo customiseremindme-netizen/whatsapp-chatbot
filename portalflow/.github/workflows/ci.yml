@@ -1,0 +1,32 @@
+name: PortalFlow checks
+on: [push, pull_request]
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install --global pnpm@11.25.0
+      - run: cp .env.example .env
+      - run: pnpm install --frozen-lockfile
+      - run: docker compose up -d --wait
+      - run: pnpm db:generate && pnpm db:migrate && pnpm db:seed
+      - run: pnpm build && pnpm typecheck && pnpm lint && pnpm test
+      - run: |
+          pnpm --filter @portalflow/api start > /tmp/api.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:4000/api/v1/health; then break; fi
+            sleep 1
+          done
+          pnpm test:integration
+      - run: pnpm test:worker
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results

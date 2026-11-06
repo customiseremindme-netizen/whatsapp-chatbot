@@ -1,0 +1,14 @@
+{
+  "extends": "./packages/config/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false
+  },
+  "include": [
+    "tests/**/*.ts",
+    "packages/database/prisma/seed.ts",
+    "playwright.config.ts",
+    "vitest*.ts",
+    "scripts/grant-admin.ts"
+  ]
+}

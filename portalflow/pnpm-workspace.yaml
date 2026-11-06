@@ -1,0 +1,28 @@
+packages:
+  - apps/*
+  - packages/*
+allowBuilds:
+  esbuild: true
+  "@nestjs/core": true
+  "@prisma/engines": true
+  argon2: true
+  prisma: true
+  sharp: true
+  '@scarf/scarf': false
+  msgpackr-extract: false
+minimumReleaseAgeExclude:
+  - "@nestjs/common@12.3.3"
+  - "@nestjs/core@12.3.3"
+  - "@nestjs/platform-express@12.3.3"
+  - "@next/env@16.4.5"
+  - "@next/swc-darwin-arm64@16.4.5"
+  - "@next/swc-darwin-x64@16.4.5"
+  - "@next/swc-linux-arm64-gnu@16.4.5"
+  - "@next/swc-linux-arm64-musl@16.4.5"
+  - "@next/swc-linux-x64-gnu@16.4.5"
+  - "@next/swc-linux-x64-musl@16.4.5"
+  - "@next/swc-win32-arm64-msvc@16.4.5"
+  - "@next/swc-win32-x64-msvc@16.4.5"
+  - next@16.4.5
+  - '@nestjs/platform-socket.io@12.3.3'
+  - '@nestjs/websockets@12.3.3'

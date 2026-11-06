@@ -1,0 +1,8 @@
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/*.prisma
+pnpm-lock.yaml
+playwright-report
+test-results

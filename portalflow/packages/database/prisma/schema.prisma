@@ -1,0 +1,409 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+}
+enum Role {
+  OWNER
+  ADMIN
+  MANAGER
+  AGENT
+  VIEWER
+}
+enum TokenPurpose {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+model User {
+  id String @id @default(uuid()) @db.Uuid
+  email String @unique
+  name String
+  passwordHash String
+  emailVerifiedAt DateTime?
+  platformAdmin Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  memberships TenantMembership[]
+  sessions Session[]
+  tokens AccountToken[]
+  assignedConversations Conversation[]
+}
+model Tenant {
+  subscription TenantSubscription?
+  id String @id @default(uuid()) @db.Uuid
+  name String
+  timezone String @default("Asia/Kolkata")
+  currency String @default("INR")
+  language String @default("en")
+  suspendedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  memberships TenantMembership[]
+  invitations Invitation[]
+  sessions Session[]
+  audits AuditLog[]
+  contacts Contact[]
+  consents ContactConsent[]
+  conversations Conversation[]
+  messages Message[]
+  inboundEvents InboundEvent[]
+  messageEvents MessageEvent[]
+  notes InternalNote[]
+  flows BotFlow[]
+  flowVersions BotFlowVersion[]
+  executions BotExecution[]
+  leads Lead[]
+}
+model TenantMembership {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  userId String @db.Uuid
+  role Role @default(VIEWER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  @@unique([tenantId,userId])
+  @@index([userId])
+}
+model Session {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  tenantId String @db.Uuid
+  accessHash String @unique
+  refreshHash String @unique
+  previousRefreshHash String?
+  csrfHash String
+  accessExpiresAt DateTime
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  @@index([userId,revokedAt])
+  @@index([expiresAt])
+  @@index([previousRefreshHash])
+}
+model AccountToken {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  purpose TokenPurpose
+  tokenHash String @unique
+  expiresAt DateTime
+  usedAt DateTime?
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  @@index([userId,purpose])
+}
+model Invitation {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  email String
+  role Role
+  tokenHash String @unique
+  expiresAt DateTime
+  acceptedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  @@index([tenantId,email])
+}
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  actorId String? @db.Uuid
+  action String
+  resourceId String?
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  @@index([tenantId,createdAt])
+}
+model EmailOutbox {
+  id String @id @default(uuid()) @db.Uuid
+  recipient String
+  subject String
+  text String
+  attempts Int @default(0)
+  sentAt DateTime?
+  lastError String?
+  createdAt DateTime @default(now())
+  @@index([sentAt,createdAt])
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+enum MessageStatus {
+  RECEIVED
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+model Contact {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  name String
+  phone String
+  email String?
+  company String?
+  tags String[] @default([])
+  notes String @default("")
+  source String @default("manual")
+  customFields Json @default("{}")
+  optedInAt DateTime?
+  optInSource String?
+  optedOutAt DateTime?
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  conversation Conversation?
+  consents ContactConsent[]
+  executions BotExecution[]
+  leads Lead[]
+  @@unique([tenantId,phone])
+  @@unique([id,tenantId])
+  @@index([tenantId,createdAt])
+}
+model Conversation {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  contactId String @unique @db.Uuid
+  assignedUserId String? @db.Uuid
+  status String @default("OPEN")
+  humanTakeover Boolean @default(false)
+  unread Boolean @default(true)
+  lastInboundAt DateTime?
+  lastActivityAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  contact Contact @relation(fields:[contactId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  assignedUser User? @relation(fields:[assignedUserId],references:[id],onDelete:SetNull)
+  messages Message[]
+  notes InternalNote[]
+  executions BotExecution[]
+  leads Lead[]
+  @@unique([id,tenantId])
+  @@unique([contactId,tenantId])
+  @@index([tenantId,status,lastActivityAt])
+}
+model Message {
+  interactive Json?
+  reply Json?
+  sequence Int @unique @default(autoincrement())
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  conversationId String @db.Uuid
+  direction MessageDirection
+  status MessageStatus
+  text String
+  idempotencyKey String
+  providerId String? @unique
+  error String?
+  attempts Int @default(0)
+  botExecutionId String? @db.Uuid
+  botExecution BotExecution? @relation(fields:[botExecutionId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  conversation Conversation @relation(fields:[conversationId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  events MessageEvent[]
+  @@unique([tenantId,idempotencyKey])
+  @@unique([id,tenantId])
+  @@index([tenantId,conversationId,createdAt])
+  @@index([status,createdAt])
+}
+model MessageEvent {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  messageId String @db.Uuid
+  status MessageStatus
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  message Message @relation(fields:[messageId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  @@unique([messageId,status])
+  @@index([tenantId,createdAt])
+}
+model InboundEvent {
+  error String?
+  reply Json?
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  externalId String
+  simulationFlowId String? @db.Uuid
+  simulationFlow BotFlow? @relation(fields:[simulationFlowId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  phone String
+  text String
+  status String @default("PENDING")
+  processedAt DateTime?
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  @@unique([tenantId,externalId])
+  @@index([status,createdAt])
+}
+model InternalNote {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  conversationId String @db.Uuid
+  authorId String @db.Uuid
+  text String
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  conversation Conversation @relation(fields:[conversationId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  @@index([tenantId,conversationId,createdAt])
+}
+
+model ContactConsent {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  contactId String @db.Uuid
+  optedIn Boolean
+  source String
+  recordedBy String? @db.Uuid
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  contact Contact @relation(fields:[contactId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  @@index([tenantId,contactId,createdAt])
+}
+
+model BotFlow {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  name String
+  draft Json
+  revision Int @default(1)
+  priority Int @default(100)
+  publishedVersion Int?
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  versions BotFlowVersion[]
+  simulationEvents InboundEvent[]
+  @@unique([id,tenantId])
+  @@index([tenantId,priority,createdAt])
+}
+model BotFlowVersion {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  flowId String @db.Uuid
+  number Int
+  data Json
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  flow BotFlow @relation(fields:[flowId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  executions BotExecution[]
+  @@unique([flowId,number])
+  @@unique([id,tenantId])
+}
+model BotExecution {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  contactId String @db.Uuid
+  conversationId String @db.Uuid
+  flowVersionId String @db.Uuid
+  currentNode String
+  variables Json @default("{}")
+  status String @default("RUNNING")
+  waitingKey String?
+  wakeAt DateTime?
+  waitExpiresAt DateTime?
+  steps Int @default(0)
+  logs Json @default("[]")
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  contact Contact @relation(fields:[contactId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  conversation Conversation @relation(fields:[conversationId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  flowVersion BotFlowVersion @relation(fields:[flowVersionId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  messages Message[]
+  lead Lead?
+  @@unique([id,tenantId])
+  @@index([tenantId,conversationId,status])
+  @@index([status,wakeAt])
+  @@index([status,waitExpiresAt])
+}
+model Lead {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  contactId String @db.Uuid
+  conversationId String @db.Uuid
+  executionId String @unique @db.Uuid
+  status String @default("NEW")
+  values Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  contact Contact @relation(fields:[contactId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  conversation Conversation @relation(fields:[conversationId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  execution BotExecution @relation(fields:[executionId,tenantId],references:[id,tenantId],onDelete:Cascade)
+  @@unique([executionId,tenantId])
+  @@index([tenantId,createdAt])
+}
+
+model SubscriptionPlan {
+  subscriptions TenantSubscription[]
+  id String @id @default(uuid()) @db.Uuid
+  name String
+  monthlyPaise Int
+  yearlyPaise Int
+  currency String @default("INR")
+  maxNumbers Int
+  maxMembers Int
+  maxContacts Int
+  maxBots Int
+  archived Boolean @default(false)
+  revision Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([archived,createdAt])
+}
+model PlatformConfiguration {
+  id String @id @default("global")
+  brandName String @default("PortalFlow")
+  primaryColor String @default("#2563EB")
+  supportEmail String @default("support@example.com")
+  revision Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model PlatformAuditLog {
+  id String @id @default(uuid()) @db.Uuid
+  actorId String @db.Uuid
+  action String
+  resourceId String
+  details Json
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+  @@index([actorId,createdAt])
+}
+
+model TenantSubscription {
+  id String @id @default(uuid()) @db.Uuid
+  tenantId String @unique @db.Uuid
+  planId String @db.Uuid
+  planName String
+  planRevision Int
+  monthlyPaise Int
+  yearlyPaise Int
+  maxNumbers Int
+  maxMembers Int
+  maxContacts Int
+  maxBots Int
+  status String @default("ACTIVE")
+  source String @default("MANUAL")
+  expiresAt DateTime
+  revision Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant Tenant @relation(fields:[tenantId],references:[id],onDelete:Cascade)
+  plan SubscriptionPlan @relation(fields:[planId],references:[id],onDelete:Restrict)
+  @@index([status,expiresAt])
+}
