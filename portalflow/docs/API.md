@@ -42,6 +42,8 @@ Workspace/account lists are currently unpaginated; audit logs are bounded. Conta
 - POST `/conversations/:id/assign` accepts `{userId}` or null; the user must belong to the tenant and not be a Viewer.
 - POST `/conversations/:id/takeover` and `/release` persist the handoff state. Releasing resumes a paused bot state; the next customer input continues execution.
 - GET/POST `/conversations/:id/notes` reads/adds internal notes; POST body `{text}`.
+- POST `/bots/:id/trigger` with `{contactId}` (owner/admin/manager) starts a published flow whose Start trigger is "Started by API or teammate". Returns `{started:true, executionId, flowId}`; 409 with a plain reason when the contact has no conversation, another session is active, the flow uses a different trigger, or takeover/opt-out prevents starting. Audited as `bot.triggered`.
+- PATCH `/contacts/:id` that adds a tag starts the first published "Tag added" flow for that tag (same rules).
 - POST `/whatsapp/mock/inbound` accepts `{externalId,phone,text,media?}` (text may be empty when media is attached) and persists a duplicate-safe event for asynchronous processing. It is authenticated and explicitly mock-only, not a Meta webhook.
 
 All messaging writes reject Viewers. WebSocket handshakes require the configured Origin and access cookie. The server selects the tenant from the session; clients cannot choose rooms. Notifications contain no message body. Live Meta webhooks, media upload, template messages and billing endpoints are not yet implemented.

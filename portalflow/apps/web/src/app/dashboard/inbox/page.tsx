@@ -40,6 +40,8 @@ export default function Inbox() {
     [incomingMedia, setIncomingMedia] = useState(""),
     [replyMedia, setReplyMedia] = useState(""),
     [replyKind, setReplyKind] = useState<"image" | "document">("document"),
+    [startFlow, setStartFlow] = useState(""),
+    [notice, setNotice] = useState(""),
     [live, setLive] = useState(false);
   const writable = me.role !== "VIEWER";
   const list = useQuery({
@@ -68,6 +70,15 @@ export default function Inbox() {
   const members = useQuery({
     queryKey: ["members", me.tenant.id],
     queryFn: () => api<Member[]>("/tenants/members"),
+  });
+  const canStartFlows = ["OWNER", "ADMIN", "MANAGER"].includes(me.role);
+  const bots = useQuery({
+    queryKey: ["bots", me.tenant.id],
+    queryFn: () =>
+      api<Array<{ id: string; name: string; publishedVersion: number | null }>>(
+        "/bots",
+      ),
+    enabled: canStartFlows,
   });
   const notes = useQuery({
     queryKey: ["notes", me.tenant.id, selected],
@@ -508,6 +519,52 @@ export default function Inbox() {
                     ? "Marketing consent recorded"
                     : "No marketing consent recorded"}
               </p>
+              {canStartFlows && (
+                <form
+                  className="mb-4 space-y-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setNotice("");
+                    void action(async () => {
+                      await post(`/bots/${startFlow}/trigger`, {
+                        contactId: current.contact.id,
+                      });
+                      setNotice("Chatbot started.");
+                    });
+                  }}
+                >
+                  <label htmlFor="start-flow">Start a chatbot</label>
+                  <select
+                    id="start-flow"
+                    className="input text-sm"
+                    required
+                    value={startFlow}
+                    disabled={busy}
+                    onChange={(e) => setStartFlow(e.target.value)}
+                  >
+                    <option value="">Choose a published flow</option>
+                    {bots.data
+                      ?.filter((b) => b.publishedVersion)
+                      .map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
+                  </select>
+                  <Button variant="outline" disabled={busy || !startFlow}>
+                    Start for this customer
+                  </Button>
+                  {notice && (
+                    <p role="status" className="text-xs text-green-700">
+                      {notice}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-slate-500">
+                    Only flows whose Start trigger is “Started by API or
+                    teammate” can be started here.
+                  </p>
+                </form>
+              )}
               <label htmlFor="assign-agent" className="mt-6">
                 Assigned agent
               </label>

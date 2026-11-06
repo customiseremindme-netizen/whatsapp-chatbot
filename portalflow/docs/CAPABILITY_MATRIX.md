@@ -9,7 +9,7 @@ This describes implemented behavior, not the target specification. No public dep
 | Contacts | Create/edit/search/page, tags, notes, soft archive, explicit consent | CSV import/export, duplicate merge, bulk ops, custom-field definitions, complete timeline |
 | Inbox | Mock text history/replies/statuses, link-based image/document messages (agent attach + simulated customer images), assignment, close/reopen, notes, unread, takeover/release, real-time events | Media upload/storage, audio, saved replies, message search, full filters, live Meta |
 | Builder | Drag/drop, connections, properties, undo/redo, autosave, revision conflicts, validation, immutable publish/unpublish/history/import/export | Remaining node kinds and triggers |
-| Engine | Start/text/image/document/ask/save input/condition/keyword match/set variable/tags/create lead/assign agent/handoff/end/delay/buttons/list, persistent sessions and deadlines, bounded steps, pinned versions, deduplication | Restricted HTTP, approved template sends, contact-tag/contact-created/scheduled/API triggers, follow-up timeouts |
+| Engine | Start/text/image/document/ask/save input/condition/keyword match/set variable/tags/create lead/assign agent/restricted HTTP request/handoff/end/delay/buttons/list; first-message, keyword, tag-added and API/teammate triggers; persistent sessions and deadlines, bounded steps, pinned versions, deduplication | Approved template sends, contact-created/scheduled triggers, machine API keys, follow-up timeouts |
 | Simulator | Real API → database → worker → same engine/mock provider, clickable menu choices, media links, state/variables/logs, reset sender | Remaining node behavior (HTTP, templates) |
 | Flow templates | Ten importable flows run locally; unknown business data escalates to human | Richer industry workflows backed by authenticated integrations |
 | Leads | Capture/update contact, one lead per execution, pipeline stage UI | Full activities/notifications/follow-up CRM |
@@ -22,7 +22,7 @@ This describes implemented behavior, not the target specification. No public dep
 | Billing | Not implemented | Mock/Razorpay provider, signature verification, authoritative events, invoices/payments/cancellation/failure flows |
 | Admin | /admin guarded server APIs, totals, tenant suspension/reactivation/session revocation, user directory, plans, branding/support, audit logs | Subscriptions/payments/rates, connection/job/webhook health, broader settings and no-code integration setup |
 | AI | Not implemented | Feature flag, isolated approved knowledge retrieval, providers, quotas, metering, fallback; no invented business facts |
-| Integrations | Not implemented | Authenticated outgoing webhooks, SSRF-safe HTTP nodes and connector abstraction |
+| Integrations | SSRF-safe HTTP Request flow node (public https only, DNS-pinned, no redirects, size/time limits, idempotency key) | Authenticated outgoing webhooks with encrypted credentials and connector abstraction |
 | Branding | Editable UI name, primary colour, support link; light/dark modes | Full white-label assets, emails/metadata/content editing |
 | Marketing | Basic landing and auth pages | Full features/pricing/solutions/contact/privacy/terms/FAQ pages |
 | Storage | Not implemented | S3-compatible upload validation/limits and safe download handling |

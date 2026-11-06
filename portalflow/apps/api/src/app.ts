@@ -27,7 +27,7 @@ import { Database } from "./database";
 import { Accounts } from "./accounts";
 import { AuthGuard, Public } from "./auth";
 import { AuthController, TenantController } from "./controllers";
-import { config } from "./config";
+import { config, allowedOrigins, originAllowed } from "./config";
 import {
   ContactsController,
   ConversationsController,
@@ -104,7 +104,7 @@ export async function createApp() {
   app.use(helmet());
   app.use(cookieParser());
   app.enableCors({
-    origin: config.WEB_ORIGIN,
+    origin: allowedOrigins,
     credentials: true,
     methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "X-CSRF-Token"],
@@ -120,8 +120,15 @@ export async function createApp() {
   app.use(async (req: Request, res: Response, next: NextFunction) => {
     if (
       !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
-      req.headers.origin !== config.WEB_ORIGIN
+      !originAllowed(req.headers.origin)
     ) {
+      if (config.NODE_ENV !== "production")
+        console.warn(
+          JSON.stringify({
+            event: "origin.rejected",
+            origin: String(req.headers.origin ?? "").slice(0, 200),
+          }),
+        );
       res.status(403).json({ error: "Origin not permitted" });
       return;
     }
@@ -132,6 +139,8 @@ export async function createApp() {
           "/api/v1/auth/me",
           "/api/v1/auth/sessions",
           "/api/v1/auth/refresh",
+          // Signing out must never be blocked by the login/registration limiter.
+          "/api/v1/auth/logout",
         ].includes(req.path);
       const key = `limit:${auth ? "auth" : "api"}:${req.ip}:${Math.floor(Date.now() / 60000)}`;
       const count = (await redis.eval(

@@ -16,6 +16,7 @@ export const nodeKinds = [
   "remove_tag",
   "create_lead",
   "assign_agent",
+  "http_request",
   "handoff",
   "end",
 ] as const;
@@ -42,6 +43,23 @@ export function isSafeMediaUrl(value: string): boolean {
     !host.startsWith("[")
   );
 }
+/** Static checks for an outbound HTTP Request node target. The worker additionally
+ * resolves DNS and refuses private, loopback, link-local and metadata addresses. */
+export function isSafeHttpTarget(
+  value: string,
+  extraOrigins: string[] = [],
+): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.username || url.password || url.hash) return false;
+  if (extraOrigins.includes(url.origin)) return true;
+  return isSafeMediaUrl(value) && (url.port === "" || url.port === "443");
+}
+export const httpVariableLimit = 20;
 export const mediaUrlSchema = z
   .string()
   .trim()
@@ -71,6 +89,17 @@ export const mediaSchema = z
 export type MediaMessage = z.infer<typeof mediaSchema>;
 /** WhatsApp limits media captions to 1024 characters. */
 export const captionLimit = 1024;
+/** Comma-separated list, trimmed and de-duplicated, preserving case. */
+export function splitList(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
 export function splitKeywords(value: string): string[] {
   return [
     ...new Set(
@@ -124,9 +153,15 @@ export const flowNodeSchema = z
         delaySeconds: z.number().int().min(1).max(604800).default(60),
         timeoutSeconds: z.number().int().min(1).max(86400).default(86400),
         inputKind: z.enum(["text", "email", "number"]).default("text"),
-        trigger: z.enum(["first", "keyword"]).default("first"),
+        trigger: z
+          .enum(["first", "keyword", "tag_added", "api"])
+          .default("first"),
         mediaUrl: z.string().max(2000).default(""),
         filename: z.string().max(240).default(""),
+        url: z.string().max(2000).default(""),
+        method: z.enum(["GET", "POST"]).default("POST"),
+        sendVariables: z.string().max(1000).default(""),
+        responseField: z.string().max(50).default(""),
       })
       .strict(),
   })
@@ -155,7 +190,14 @@ export const flowSchema = z
   .strict();
 export type Flow = z.infer<typeof flowSchema>;
 export type FlowNode = Flow["nodes"][number];
-export function validateFlow(input: unknown): string[] {
+export interface ValidateOptions {
+  /** Exact extra origins allowed for HTTP Request nodes (development tests only). */
+  httpOrigins?: string[];
+}
+export function validateFlow(
+  input: unknown,
+  options: ValidateOptions = {},
+): string[] {
   const parsed = flowSchema.safeParse(input);
   if (!parsed.success)
     return parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
@@ -183,6 +225,12 @@ export function validateFlow(input: unknown): string[] {
       !node.data.value.trim()
     )
       errors.push("Keyword trigger needs a keyword");
+    if (
+      node.type === "start" &&
+      node.data.trigger === "tag_added" &&
+      (!node.data.value.trim() || node.data.value.trim().length > 40)
+    )
+      errors.push("Tag trigger needs a tag of 1–40 characters");
     if (
       ["text", "ask", "buttons", "list"].includes(node.type) &&
       !node.data.text.trim()
@@ -237,6 +285,31 @@ export function validateFlow(input: unknown): string[] {
       if (!["equals", "contains"].includes(node.data.operator))
         errors.push(`${node.id}: keyword matching is exact or contains`);
     }
+    if (node.type === "http_request") {
+      if (!isSafeHttpTarget(node.data.url, options.httpOrigins))
+        errors.push(
+          `${node.id}: use a public https:// address on the standard port, without credentials`,
+        );
+      const sent = splitList(node.data.sendVariables);
+      if (
+        sent.length > httpVariableLimit ||
+        sent.some((v) => !key.safeParse(v).success)
+      )
+        errors.push(
+          `${node.id}: send up to ${httpVariableLimit} comma-separated variable names`,
+        );
+      if (node.data.variable && !key.safeParse(node.data.variable).success)
+        errors.push(`${node.id}: use a valid variable name for the response`);
+      if (
+        node.data.responseField &&
+        !key.safeParse(node.data.responseField).success
+      )
+        errors.push(`${node.id}: response field must be a simple JSON key`);
+      if (node.data.responseField && !node.data.variable)
+        errors.push(
+          `${node.id}: choose a variable to store the response field`,
+        );
+    }
     if (
       node.type === "assign_agent" &&
       !z.string().uuid().safeParse(node.data.value).success
@@ -267,7 +340,11 @@ export function validateFlow(input: unknown): string[] {
         )
       )
         errors.push(`${node.id}: connect exactly one branch per option`);
-    } else if (node.type === "condition" || node.type === "keyword_match") {
+    } else if (
+      node.type === "condition" ||
+      node.type === "keyword_match" ||
+      node.type === "http_request"
+    ) {
       if (
         outgoing.length !== 2 ||
         !outgoing.some((e) => e.sourceHandle === "true") ||
@@ -357,6 +434,10 @@ export function makeNode(
       timeoutSeconds: 86400,
       mediaUrl: "",
       filename: "",
+      url: "",
+      method: "POST" as const,
+      sendVariables: "",
+      responseField: "",
       ...(type === "keyword_match"
         ? { variable: "trigger_text", operator: "contains" as const }
         : {}),

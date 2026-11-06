@@ -5,6 +5,7 @@ import {
   lockTenant,
 } from "./entitlements";
 export * from "./entitlements";
+export * from "./http";
 import {
   interactiveSchema,
   mediaSchema,
@@ -13,7 +14,12 @@ import {
   type MediaMessage,
 } from "@portalflow/shared";
 import { executeInbound } from "./engine";
-export { executeInbound, processScheduledExecutions } from "./engine";
+export {
+  executeInbound,
+  processScheduledExecutions,
+  startTriggeredFlow,
+  type TriggerOutcome,
+} from "./engine";
 import { PrismaClient, Prisma, MessageStatus } from "@portalflow/database";
 export interface OutboundPayload {
   messageId: string;

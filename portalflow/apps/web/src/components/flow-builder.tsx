@@ -95,6 +95,7 @@ const labels: Record<NodeKind, string> = {
   remove_tag: "Remove tag",
   create_lead: "Create lead",
   assign_agent: "Assign agent",
+  http_request: "HTTP request",
   handoff: "Human handoff",
   end: "End flow",
 };
@@ -110,7 +111,7 @@ function FlowCard({ data, type, selected }: NodeProps<CanvasNode>) {
       </div>
       <p className="text-sm font-semibold">{data.label}</p>
       <p className="mt-1 line-clamp-2 text-xs text-slate-500">
-        {data.text || data.mediaUrl || data.variable || data.value}
+        {data.text || data.mediaUrl || data.url || data.variable || data.value}
       </p>
       {["buttons", "list"].includes(type ?? "") ? (
         <div className="mt-3 space-y-2">
@@ -126,10 +127,16 @@ function FlowCard({ data, type, selected }: NodeProps<CanvasNode>) {
             </div>
           ))}
         </div>
-      ) : type === "condition" || type === "keyword_match" ? (
+      ) : type === "condition" ||
+        type === "keyword_match" ||
+        type === "http_request" ? (
         <>
           <span className="absolute -bottom-5 left-4 text-xs text-green-600">
-            {type === "keyword_match" ? "match" : "true"}
+            {type === "keyword_match"
+              ? "match"
+              : type === "http_request"
+                ? "success"
+                : "true"}
           </span>
           <Handle
             type="source"
@@ -138,7 +145,11 @@ function FlowCard({ data, type, selected }: NodeProps<CanvasNode>) {
             style={{ left: "25%" }}
           />
           <span className="absolute -bottom-5 right-4 text-xs text-red-500">
-            {type === "keyword_match" ? "no match" : "false"}
+            {type === "keyword_match"
+              ? "no match"
+              : type === "http_request"
+                ? "failure"
+                : "false"}
           </span>
           <Handle
             type="source"
@@ -881,6 +892,80 @@ function Editor({ id }: { id: string }) {
                   </select>
                 </div>
               )}
+              {active.type === "http_request" && (
+                <div className="space-y-3">
+                  <div>
+                    <label htmlFor="http-url">Address (https)</label>
+                    <Input
+                      id="http-url"
+                      type="url"
+                      placeholder="https://hooks.example.com/portalflow"
+                      value={active.data.url}
+                      disabled={!editable}
+                      onChange={(e) => property("url", e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="http-method">Method</label>
+                    <select
+                      id="http-method"
+                      className="input"
+                      value={active.data.method}
+                      disabled={!editable}
+                      onChange={(e) => property("method", e.target.value)}
+                    >
+                      <option value="POST">
+                        POST (sends chosen variables)
+                      </option>
+                      <option value="GET">GET (sends nothing)</option>
+                    </select>
+                  </div>
+                  {active.data.method === "POST" && (
+                    <div>
+                      <label htmlFor="http-send">Variables to send</label>
+                      <Input
+                        id="http-send"
+                        placeholder="name, phone, requirement"
+                        value={active.data.sendVariables}
+                        disabled={!editable}
+                        onChange={(e) =>
+                          property("sendVariables", e.target.value)
+                        }
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label htmlFor="http-field">
+                      Response field (optional)
+                    </label>
+                    <Input
+                      id="http-field"
+                      placeholder="status"
+                      value={active.data.responseField}
+                      disabled={!editable}
+                      onChange={(e) =>
+                        property("responseField", e.target.value)
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="http-save">Save result in variable</label>
+                    <Input
+                      id="http-save"
+                      placeholder="order_status"
+                      value={active.data.variable}
+                      disabled={!editable}
+                      onChange={(e) => property("variable", e.target.value)}
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    Public https addresses only; private networks are blocked.
+                    5-second limit, redirects are not followed. Without a
+                    response field the HTTP status code is saved. Connect the
+                    green success and red failure outputs.
+                  </p>
+                </div>
+              )}
               {active.type === "assign_agent" && (
                 <div>
                   <label htmlFor="assign-member">Assign to</label>
@@ -917,6 +1002,8 @@ function Editor({ id }: { id: string }) {
                   >
                     <option value="first">First customer message</option>
                     <option value="keyword">Exact keyword</option>
+                    <option value="tag_added">Tag added to contact</option>
+                    <option value="api">Started by API or teammate</option>
                   </select>
                 </div>
               )}
@@ -928,12 +1015,15 @@ function Editor({ id }: { id: string }) {
                 "remove_tag",
               ].includes(active.type ?? "") ||
                 (active.type === "start" &&
-                  active.data.trigger === "keyword")) && (
+                  ["keyword", "tag_added"].includes(active.data.trigger))) && (
                 <div>
                   <label htmlFor="node-value">
                     {active.type === "keyword_match"
                       ? "Keywords (comma separated)"
-                      : "Value"}
+                      : active.type === "start" &&
+                          active.data.trigger === "tag_added"
+                        ? "Tag"
+                        : "Value"}
                   </label>
                   <Input
                     id="node-value"

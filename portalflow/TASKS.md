@@ -196,3 +196,19 @@ Verification on 6 November 2026 (media/nodes milestone, cloud sandbox with Node 
 - `pnpm test:worker` (real SMTP delivery) was not run: Mailpit was not available in this sandbox.
 - No live Meta connection, media upload, payment collection, public deployment or claim of Meta approval.
 - Next executable milestone: official Meta provider contracts and signed webhook ingestion (raw-body X-Hub-Signature-256, challenge GET, durable dedup, out-of-order statuses, phone_number_id tenant resolution) with mocked contract tests, mapping the new media payload to Graph API `image`/`document` link objects. Then the restricted HTTP node (SSRF-safe client) and remaining triggers.
+
+## Completed milestone: HTTP Request node, tag/API triggers and environment fixes
+
+- [x] Node 24.22 verified (build, typecheck, lint, all suites). Mailpit built via the Go module proxy; `pnpm test:worker` passes.
+- [x] Fixed flaky browser sign-out: `/auth/logout` shared the 30/min login/registration limiter, so after the integration suite registered many accounts, sign-out returned 429. Logout is now exempt from that bucket (still in the general API limit); verified by exhausting the limiter and signing out.
+- [x] Fixed web/API port clash: `next start`/`next dev` read `PORT=4000` from an exported `.env`; the web scripts now pin port 3000.
+- [x] `WEB_ORIGIN_ALLOWLIST` (exact extra origins for CORS/CSRF/WebSocket; https-only in production); rejected origins logged in development.
+- [x] HTTP Request node with SSRF controls (static checks, DNS validation of all answers, pinned socket, no redirects, 5 s/16 KB/64 KB limits, idempotency key), executed by the worker outside transactions with success/failure branches.
+- [x] Start triggers "Tag added to contact" and "Started by API or teammate" (`POST /bots/:id/trigger`, inbox "Start a chatbot" panel); bot Apply Tag steps do not fire tag triggers.
+- [x] `PLAYWRIGHT_CHROMIUM_PATH` option in the Playwright config.
+
+Verification on 6 November 2026 (Node 24.22.2, local PostgreSQL 16, Redis 7, Mailpit built from source; cloud sandbox):
+- `pnpm build`, `pnpm typecheck`, `pnpm lint` passed. `pnpm test`: 41 unit tests passed. `pnpm test:integration`: 64 tests in 8 files passed. `pnpm test:e2e`: 10/10 passed in one full run directly after the integration suite. `pnpm test:worker`: passed.
+- Development database dropped, re-migrated (9 migrations) and re-seeded to the three demo workspaces for a clean dashboard.
+- Remaining, not done: Send Approved Template node and template management; official Meta Cloud API/webhooks; contact-created and scheduled triggers; machine API keys; encrypted integration credentials; campaigns, pricing, Razorpay billing, AI; media upload; production deployment.
+- Next executable milestone: official Meta provider contracts and signed webhook ingestion with mocked contract tests (see CLAUDE_PROMPT.md).

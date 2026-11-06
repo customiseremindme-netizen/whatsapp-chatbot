@@ -25,3 +25,11 @@ Interactive tests exercise both button and list routing after worker restart, pe
 Admin tests cover ordinary-owner denial on every admin API, anonymous denial, CSRF, session revocation/reactivation, operator-lockout prevention, sanitized user directory, stored platform totals, price validation/revision conflicts, safe public branding and audit persistence. Browser tests edit plan prices/archive state and branding through the UI and verify owner access denial. The development seed now includes the admin account required by browser tests.
 
 Entitlement coverage: owner/cross-tenant denial, concurrent last-slot contacts/bots, invitation reservations/acceptance, snapshot pinning, stale assignment rejection, downgrade safety, blocked inbound recovery, expired outbox/timer refusal, trial expiry, and browser admin assignment → owner usage → enforced contact limit.
+
+## Environment notes (November 2026)
+
+- Node 24 (see `engines`). Running on Node 22 works but is unsupported.
+- `pnpm test:integration` needs the API running with `HTTP_NODE_TEST_ORIGINS=http://127.0.0.1:47811` (present in `.env.example`) because the HTTP Request node test starts a local server on that port.
+- `pnpm test:worker` needs Mailpit on 1025/8025. Without Docker, `go install github.com/axllent/mailpit@v1.27.11` builds it.
+- To reuse a preinstalled Chromium instead of `playwright install`, set `PLAYWRIGHT_CHROMIUM_PATH` to its executable.
+- Integration tests register many accounts; the login/registration limiter (30/min per IP) no longer affects sign-out, which previously made the browser sign-out step flaky right after the integration suite.

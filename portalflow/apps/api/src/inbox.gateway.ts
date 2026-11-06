@@ -7,10 +7,10 @@ import {
 import { Server, Socket } from "socket.io";
 import Redis from "ioredis";
 import { Database } from "./database";
-import { config } from "./config";
+import { config, allowedOrigins, originAllowed } from "./config";
 import { hashToken } from "./security";
 @WebSocketGateway({
-  cors: { origin: config.WEB_ORIGIN, credentials: true },
+  cors: { origin: allowedOrigins, credentials: true },
   transports: ["websocket"],
 })
 export class InboxGateway implements OnGatewayConnection, OnModuleDestroy {
@@ -68,7 +68,7 @@ export class InboxGateway implements OnGatewayConnection, OnModuleDestroy {
         return;
       }
       if (
-        socket.handshake.headers.origin !== config.WEB_ORIGIN ||
+        !originAllowed(socket.handshake.headers.origin) ||
         !(await this.identity(socket))
       ) {
         socket.disconnect(true);

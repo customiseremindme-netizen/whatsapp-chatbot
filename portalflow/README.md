@@ -14,12 +14,12 @@ A real, incremental WhatsApp automation SaaS project. **This checkout currently 
 - Tenant-scoped contacts with search/pagination, editing, tags, notes, soft archive and explicit consent history.
 - Real-time text inbox with persisted incoming/outgoing messages, internal notes, assignment, close/reopen, unread state and human takeover.
 - Visual chatbot editing, immutable publishing, persisted questions/branches/lead capture, and a simulator using the real engine.
-- Send Image / Send Document (public https links), Save User Input, Keyword Match and Assign Agent nodes; agents can attach a document/image link to inbox replies.
+- Send Image / Send Document (public https links), Save User Input, Keyword Match, Assign Agent and SSRF-restricted HTTP Request nodes; tag-added and API/teammate triggers; agents can attach a document/image link to inbox replies.
 - Reply-button/list nodes with editable options, validated branches, context-bound selections, and clickable simulator replies.
 - Durable Delay nodes, configurable answer deadlines, restart recovery, and takeover-aware scheduled resumes.
 - A mock WhatsApp provider backed by durable inbound/message tables and a BullMQ worker; duplicate suppression, monotonic status updates, bounded provider retries, STOP suppression and the 24-hour service window.
 
-No Meta approval or real phone delivery is implied. Campaigns, payment collection, message/number quotas, full super-admin operations, media upload/storage, template messaging, HTTP Request/Approved Template nodes, non-message triggers and live integrations are **not yet implemented**.
+No Meta approval or real phone delivery is implied. Campaigns, payment collection, message/number quotas, full super-admin operations, media upload/storage, template messaging, the Approved Template node, contact-created/scheduled triggers and live integrations are **not yet implemented**.
 
 - Initial `/admin`: platform-authorized totals/business suspension and reactivation/user directory/INR plan catalogue/branding and support settings/audit history. Manual plan assignment now enforces contact, chatbot and team capacity; it never implies payment.
 - Development-only platform operator: `admin@portalflow.example`, using `SEED_PASSWORD`, plus the two customer demo businesses. See [ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md).
@@ -28,7 +28,7 @@ No Meta approval or real phone delivery is implied. Campaigns, payment collectio
 
 ## Local startup
 
-Requires Node 24 LTS, pnpm 11.25.0, Docker with Compose. Run from this directory:
+Requires Node 24 LTS, pnpm 11.25.0, Docker with Compose (or local PostgreSQL 16+, Redis 7 and Mailpit). The web app always listens on port 3000 and the API on `PORT` (4000), even when `.env` is exported into the shell. Run from this directory:
 
 ```sh
 cp .env.example .env

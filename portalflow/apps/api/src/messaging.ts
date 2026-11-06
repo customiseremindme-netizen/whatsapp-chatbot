@@ -28,6 +28,7 @@ import {
   withinServiceWindow,
   assertCapacity,
   assertActive,
+  startTriggeredFlow,
 } from "@portalflow/core";
 import { Database } from "./database";
 import { AuthRequest } from "./auth";
@@ -115,12 +116,34 @@ export class ContactsController {
       body,
     );
     const contact = await this.get(req, id);
-    return this.database.db.contact.update({
-      where: {
-        tenantId_phone: { tenantId: req.auth.tenantId, phone: contact.phone },
+    return this.database.db.$transaction(
+      async (tx) => {
+        const updated = await tx.contact.update({
+          where: {
+            tenantId_phone: {
+              tenantId: req.auth.tenantId,
+              phone: contact.phone,
+            },
+          },
+          data,
+        });
+        // A teammate adding a tag can start a published "tag added" flow.
+        const before = new Set(contact.tags.map((t) => t.toLowerCase()));
+        for (const tag of updated.tags.filter(
+          (t) => !before.has(t.toLowerCase()),
+        )) {
+          const outcome = await startTriggeredFlow(tx, {
+            tenantId: req.auth.tenantId,
+            contactId: updated.id,
+            trigger: "tag_added",
+            tag,
+          });
+          if (outcome.started || outcome.reason !== "no_matching_flow") break;
+        }
+        return updated;
       },
-      data,
-    });
+      { timeout: 30000 },
+    );
   }
   @Delete(":id") async remove(
     @Req() req: AuthRequest,

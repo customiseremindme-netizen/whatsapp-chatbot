@@ -1,4 +1,6 @@
 import { assertActive, EntitlementError, lockTenant } from "./entitlements";
+import { callHttpNode, httpTestOrigins, type HttpCallResult } from "./http";
+import { randomUUID } from "node:crypto";
 import { Prisma, PrismaClient } from "@portalflow/database";
 import {
   Flow,
@@ -8,6 +10,7 @@ import {
   interpolate,
   emailSchema,
   keywordMatch,
+  splitList,
   type InteractiveReply,
   type InteractiveMessage,
   type MediaMessage,
@@ -41,6 +44,8 @@ export async function executeInbound(
     simulationFlowId?: string | null;
     timerExecutionId?: string;
     reply?: InteractiveReply;
+    /** Result of an HTTP Request node call made by the worker outside this transaction. */
+    httpResult?: HttpCallResult;
   },
   conversationId: string,
   contactId: string,
@@ -120,9 +125,17 @@ export async function executeInbound(
       execution.wakeAt > new Date()
     )
       return;
+    const sleepingAt = execution.flowVersion.data as {
+      nodes?: Array<{ id?: unknown; type?: unknown }>;
+    };
+    const httpWait =
+      sleepingAt.nodes?.find((n) => n.id === execution!.currentNode)?.type ===
+      "http_request";
+    if (httpWait && !event.httpResult) return;
     if (
-      !conversation.lastInboundAt ||
-      Date.now() - conversation.lastInboundAt.getTime() >= 86400000
+      !httpWait &&
+      (!conversation.lastInboundAt ||
+        Date.now() - conversation.lastInboundAt.getTime() >= 86400000)
     ) {
       await tx.botExecution.update({
         where: { id: execution.id },
@@ -160,14 +173,20 @@ export async function executeInbound(
       });
       if (!version) continue;
       const parsed = flowSchema.safeParse(version.data);
-      if (!parsed.success || validateFlow(parsed.data).length) continue;
+      if (
+        !parsed.success ||
+        validateFlow(parsed.data, { httpOrigins: httpTestOrigins() }).length
+      )
+        continue;
       const start = parsed.data.nodes.find((n) => n.type === "start")!;
+      // Tag and API triggers never start from customer text; see startTriggeredFlow.
       const matches =
         !!event.simulationFlowId ||
         (start.data.trigger === "first"
           ? inboundCount === 1
-          : event.text.trim().toLowerCase() ===
-            start.data.value.trim().toLowerCase());
+          : start.data.trigger === "keyword" &&
+            event.text.trim().toLowerCase() ===
+              start.data.value.trim().toLowerCase());
       if (!matches) continue;
       execution = await tx.botExecution.create({
         data: {
@@ -189,7 +208,10 @@ export async function executeInbound(
   }
   if (!execution || execution.status === "PAUSED") return;
   const parsed = flowSchema.safeParse(execution.flowVersion.data);
-  if (!parsed.success || validateFlow(parsed.data).length) {
+  if (
+    !parsed.success ||
+    validateFlow(parsed.data, { httpOrigins: httpTestOrigins() }).length
+  ) {
     await tx.botExecution.update({
       where: { id: execution.id },
       data: { status: "FAILED", error: "Published flow is invalid" },
@@ -234,7 +256,22 @@ export async function executeInbound(
   }
   if (execution.status === "SLEEPING") {
     const delay = flow.nodes.find((n) => n.id === current);
-    if (!delay || delay.type !== "delay") {
+    if (delay?.type === "http_request" && event.httpResult) {
+      const result = event.httpResult;
+      if (delay.data.variable)
+        variables[delay.data.variable] = delay.data.responseField
+          ? result.value
+          : String(result.status);
+      logs.push({
+        nodeId: current,
+        type: "http_request",
+        state: result.ok ? "succeeded" : "failed",
+        httpStatus: result.status,
+        ...(result.error ? { error: result.error } : {}),
+        at: new Date().toISOString(),
+      });
+      current = nextNode(flow, current, result.ok) ?? "";
+    } else if (!delay || delay.type !== "delay") {
       await tx.botExecution.update({
         where: { id: execution.id },
         data: {
@@ -244,14 +281,15 @@ export async function executeInbound(
         },
       });
       return;
+    } else {
+      logs.push({
+        nodeId: current,
+        type: "delay",
+        state: "resumed",
+        at: new Date().toISOString(),
+      });
+      current = nextNode(flow, current) ?? "";
     }
-    logs.push({
-      nodeId: current,
-      type: "delay",
-      state: "resumed",
-      at: new Date().toISOString(),
-    });
-    current = nextNode(flow, current) ?? "";
   }
   if (
     execution.status === "WAITING" &&
@@ -425,6 +463,11 @@ export async function executeInbound(
         status = "SLEEPING";
         wakeAt = new Date(Date.now() + node.data.delaySeconds * 1000);
         break;
+      case "http_request":
+        // Yield; the worker performs the call outside any transaction and resumes.
+        status = "SLEEPING";
+        wakeAt = new Date();
+        break;
       case "set_variable":
         variables[node.data.variable] = interpolate(node.data.value, variables);
         break;
@@ -537,7 +580,12 @@ export async function processScheduledExecutions(db: PrismaClient) {
     orderBy: { updatedAt: "asc" },
     take: 25,
   });
-  for (const execution of due) {
+  // HTTP Request nodes are called concurrently so one slow endpoint cannot stall other timers.
+  const httpResults = await Promise.all(
+    due.map((execution) => pendingHttpCall(db, execution.id)),
+  );
+  for (const [index, execution] of due.entries()) {
+    const httpResult = httpResults[index];
     await db.$transaction(
       (tx) =>
         executeInbound(
@@ -547,6 +595,7 @@ export async function processScheduledExecutions(db: PrismaClient) {
             tenantId: execution.tenantId,
             text: "",
             timerExecutionId: execution.id,
+            ...(httpResult ? { httpResult } : {}),
           },
           execution.conversationId,
           execution.contactId,
@@ -558,4 +607,135 @@ export async function processScheduledExecutions(db: PrismaClient) {
     tenantId,
     conversationId,
   }));
+}
+
+/** If a due execution is parked on an HTTP Request node, perform that call now,
+ * outside any database transaction or row lock. At-least-once: a crash after the
+ * call but before commit repeats it with the same Idempotency-Key header. */
+async function pendingHttpCall(
+  db: PrismaClient,
+  executionId: string,
+): Promise<HttpCallResult | undefined> {
+  const execution = await db.botExecution.findUnique({
+    where: { id: executionId },
+    include: { flowVersion: true },
+  });
+  if (!execution || execution.status !== "SLEEPING") return undefined;
+  const parsed = flowSchema.safeParse(execution.flowVersion.data);
+  if (!parsed.success) return undefined;
+  const node = parsed.data.nodes.find((n) => n.id === execution.currentNode);
+  if (node?.type !== "http_request") return undefined;
+  const variables = jsonVariables(execution.variables);
+  const sent: Record<string, string> = {};
+  for (const name of splitList(node.data.sendVariables))
+    if (Object.hasOwn(variables, name)) sent[name] = variables[name]!;
+  return callHttpNode({
+    url: node.data.url,
+    method: node.data.method,
+    body: {
+      event: "portalflow.flow.http_request",
+      executionId: execution.id,
+      nodeId: node.id,
+      variables: sent,
+    },
+    idempotencyKey: `${execution.id}:${node.id}:${execution.steps}`,
+    responseField: node.data.responseField || undefined,
+  });
+}
+
+export type TriggerOutcome =
+  | { started: true; executionId: string; flowId: string }
+  | {
+      started: false;
+      reason:
+        | "no_conversation"
+        | "active_session"
+        | "no_matching_flow"
+        | "not_started";
+    };
+/** Starts a flow for a contact from a non-message trigger (tag added, or an
+ * authorized API/teammate request). Runs inside the caller's transaction and uses
+ * the same engine entry, locks and takeover/suppression/window rules as inbound
+ * messages. Bot apply_tag steps do not fire tag triggers, which prevents loops. */
+export async function startTriggeredFlow(
+  tx: Prisma.TransactionClient,
+  input: {
+    tenantId: string;
+    contactId: string;
+    trigger: "tag_added" | "api";
+    tag?: string;
+    flowId?: string;
+  },
+): Promise<TriggerOutcome> {
+  await lockTenant(tx, input.tenantId);
+  await tx.$queryRaw`SELECT id FROM "Contact" WHERE id=${input.contactId}::uuid AND "tenantId"=${input.tenantId}::uuid FOR UPDATE`;
+  const conversation = await tx.conversation.findFirst({
+    where: { tenantId: input.tenantId, contactId: input.contactId },
+  });
+  if (!conversation) return { started: false, reason: "no_conversation" };
+  const active = await tx.botExecution.findFirst({
+    where: {
+      tenantId: input.tenantId,
+      conversationId: conversation.id,
+      status: { in: ["RUNNING", "WAITING", "SLEEPING", "PAUSED"] },
+    },
+  });
+  if (active) return { started: false, reason: "active_session" };
+  const flows = await tx.botFlow.findMany({
+    where: {
+      tenantId: input.tenantId,
+      deletedAt: null,
+      publishedVersion: { not: null },
+      ...(input.flowId ? { id: input.flowId } : {}),
+    },
+    orderBy: [{ priority: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+  });
+  for (const candidate of flows) {
+    const version = await tx.botFlowVersion.findUnique({
+      where: {
+        flowId_number: {
+          flowId: candidate.id,
+          number: candidate.publishedVersion!,
+        },
+      },
+    });
+    const parsed = version && flowSchema.safeParse(version.data);
+    if (!parsed || !parsed.success) continue;
+    const start = parsed.data.nodes.find((n) => n.type === "start");
+    if (
+      !start ||
+      start.data.trigger !== input.trigger ||
+      (input.trigger === "tag_added" &&
+        start.data.value.trim().toLowerCase() !==
+          (input.tag ?? "").trim().toLowerCase())
+    )
+      continue;
+    const before = await tx.botExecution.findMany({
+      where: { tenantId: input.tenantId, conversationId: conversation.id },
+      select: { id: true },
+    });
+    await executeInbound(
+      tx,
+      {
+        id: `trigger-${randomUUID()}`,
+        tenantId: input.tenantId,
+        text: "",
+        simulationFlowId: candidate.id,
+      },
+      conversation.id,
+      input.contactId,
+    );
+    const execution = await tx.botExecution.findFirst({
+      where: {
+        tenantId: input.tenantId,
+        conversationId: conversation.id,
+        flowVersionId: version!.id,
+        id: { notIn: before.map((e) => e.id) },
+      },
+    });
+    return execution
+      ? { started: true, executionId: execution.id, flowId: candidate.id }
+      : { started: false, reason: "not_started" };
+  }
+  return { started: false, reason: "no_matching_flow" };
 }

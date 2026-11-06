@@ -4,7 +4,7 @@ Implemented locally with the mock WhatsApp provider. The visual editor and simul
 
 ## Implemented nodes
 
-Start Trigger, Send Text, Send Image, Send Document, Ask Question, Save User Input, Delay, Reply Buttons, Interactive List, Condition, Keyword Match, Set Variable, Apply Tag, Remove Tag, Create Lead, Assign Agent, Human Handoff, End Flow (17 of the 19 required kinds plus the extra Create Lead). Questions validate text, email, or non-negative numeric input. Conditions support equals, contains, exists and numeric greater-than-or-equal. Text substitutes `{{variable}}` as plain text; no JavaScript, expression interpreter or arbitrary code runs.
+Start Trigger, Send Text, Send Image, Send Document, Ask Question, Save User Input, Delay, Reply Buttons, Interactive List, Condition, Keyword Match, Set Variable, Apply Tag, Remove Tag, Create Lead, Assign Agent, HTTP Request, Human Handoff, End Flow (18 of the 19 required kinds plus the extra Create Lead; Send Approved Template remains). Questions validate text, email, or non-negative numeric input. Conditions support equals, contains, exists and numeric greater-than-or-equal. Text substitutes `{{variable}}` as plain text; no JavaScript, expression interpreter or arbitrary code runs.
 
 The editor uses @xyflow/react with a node library, drag/drop, connection handles, selected-node properties, pan/zoom/minimap, delete/duplicate, undo/redo, debounced draft saves, graph validation, publish/unpublish, immutable version history, version-to-draft restoration, JSON export/import and a simulator. Import size is capped at 100 KB. Draft edits use a revision compare-and-swap; conflicting edits require reload rather than silently overwriting another editor.
 
@@ -37,9 +37,28 @@ Ten importable templates are present and exercised through the real worker: Welc
 
 Outgoing and incoming messages store an optional validated `media` JSON payload (`{kind, url, filename?}`). The mock provider validates it and refuses to combine media with interactive options. The inbox and simulator show media as an outbound link (opened with `noopener noreferrer`) rather than embedding remote images, so the strict `img-src` CSP is unchanged and no remote image loads automatically. Media-only customer messages are stored; an Ask/Save Input expecting text treats them as invalid input.
 
+## HTTP Request node (restricted)
+
+The node calls one fixed business endpoint and follows its **success** (2xx) or **failure** (anything else, timeout, block) branch. It never runs user code.
+
+- Target: `https://` only, standard port 443, no credentials, no `localhost`/`.local`/`.internal` names or IP literals (checked at validate/publish and again at call time).
+- At call time the worker resolves DNS, refuses the request if *any* answer is private, loopback, link-local, CGNAT, multicast, documentation, IPv4-mapped/NAT64 or cloud-metadata space, then pins the socket to the checked address (prevents DNS rebinding). Redirects are not followed. 5-second limit, 16 KB request, 64 KB response.
+- POST sends `{event, executionId, nodeId, variables}` containing only the variables listed in the node; GET sends nothing. Every call carries an `Idempotency-Key` of `execution:node:step`.
+- The result is saved into the chosen variable: one scalar top-level JSON field if "Response field" is set, otherwise the HTTP status code. The raw body is never stored.
+- Execution: the node parks the session as SLEEPING with an immediate wake time. The recurring worker job performs due calls concurrently, outside any transaction or row lock, then resumes the pinned flow in a transaction. Takeover/release/restart behave as for Delay. Delivery is at-least-once: a crash after the call but before commit repeats it with the same Idempotency-Key.
+- No auth headers or secrets yet; storing encrypted integration credentials is a later milestone. For local tests only, `HTTP_NODE_TEST_ORIGINS` lists exact extra origins (refused when `NODE_ENV=production`).
+
+## Triggers
+
+Start Trigger supports: **First customer message**, **Exact keyword**, **Tag added to contact** and **Started by API or teammate**.
+
+- *Tag added* fires when a teammate adds that tag (case-insensitive) to a contact through the contacts API/UI. Tags applied by a bot's Apply Tag step do not fire it, which prevents loops. Customer text equal to the tag does not start it.
+- *Started by API or teammate* runs via `POST /api/v1/bots/:id/trigger {contactId}` (manager+, session-authenticated and CSRF-protected) or the inbox's "Start a chatbot" panel. Machine API keys are not implemented yet.
+- Both use the same engine entry and locks as inbound messages. They need an existing conversation (the contact must have messaged first), never start while another session is active, during human takeover, or for opted-out contacts, and any message they send still requires the open 24-hour service window (outside it, delivery fails until approved templates exist).
+
 ## Not implemented yet
 
-Restricted HTTP Request and Send Approved Template nodes (they depend on the SSRF-safe HTTP client and Meta template management milestones), contact-tag/contact-created/API/scheduled triggers, media upload/storage, AI and outbound integration actions. These are absent from the node library rather than nonfunctional placeholders. Live Meta delivery is still pending. The complete 19-node and multi-trigger specification is not claimed complete.
+The Send Approved Template node (depends on Meta template management), contact-created and scheduled triggers, machine API keys, media upload/storage, AI and outbound integration actions. These are absent from the node library rather than nonfunctional placeholders. Live Meta delivery is still pending. The complete 19-node and multi-trigger specification is not claimed complete.
 
 ## Durable delays
 

@@ -43,6 +43,9 @@ Open **Chatbot Builder**, open a flow, and click a step in the left list to add 
 - **Keyword match** — checks what the customer wrote. Type words separated by commas (for example `price, rate, cost`). Connect the green "match" dot to the step for those words and the red "no match" dot to the other path. Leave "Check variable" as `trigger_text` to check the customer's first message.
 - **Assign agent** — choose a teammate; the conversation appears as assigned to them in the Inbox. The bot keeps going; add **Human handoff** if a person should take over.
 
+- **HTTP request** — sends chosen details (for example `order_number`) to your own system's web address and continues on the green "success" or red "failure" path. Type the address (must start with `https://`), the variable names to send, and optionally which field of the reply to keep (for example `status`). It saves the result so you can write `{{order_status}}` in a later message. Addresses inside private networks are blocked for safety.
+- **Start trigger options** — besides "First customer message" and "Exact keyword", a flow can start when a teammate **adds a tag** to a contact (type the tag), or be **started by a teammate**: open the conversation in the Inbox, choose the flow under "Start a chatbot", and click "Start for this customer". The customer must have messaged you first.
+
 In the **Inbox**, you can paste an `https://` link under the reply box and pick Document or Image to send a file link with your reply. Everything is still sent through the practice (mock) WhatsApp connection, not to real phones.
 
 ## Not available yet

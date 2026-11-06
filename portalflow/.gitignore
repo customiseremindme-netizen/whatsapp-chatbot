@@ -11,3 +11,4 @@ playwright-report
 *.log
 
 *.tsbuildinfo
+dump.rdb

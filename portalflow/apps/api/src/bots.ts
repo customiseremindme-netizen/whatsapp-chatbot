@@ -1,4 +1,8 @@
-import { assertCapacity } from "@portalflow/core";
+import {
+  assertCapacity,
+  httpTestOrigins,
+  startTriggeredFlow,
+} from "@portalflow/core";
 import {
   Controller,
   Get,
@@ -151,7 +155,7 @@ export class BotsController {
   ) {
     const flow = await this.find(req, id);
     const errors = [
-      ...validateFlow(flow.draft),
+      ...validateFlow(flow.draft, { httpOrigins: httpTestOrigins() }),
       ...(await this.memberErrors(
         this.database.db,
         req.auth.tenantId,
@@ -179,7 +183,7 @@ export class BotsController {
       if (flow.revision !== revision)
         throw new ConflictException("Save the latest draft before publishing");
       const errors = [
-        ...validateFlow(flow.draft),
+        ...validateFlow(flow.draft, { httpOrigins: httpTestOrigins() }),
         ...(await this.memberErrors(tx, req.auth.tenantId, flow.draft)),
       ];
       if (errors.length) throw new BadRequestException({ message: errors });
@@ -210,6 +214,54 @@ export class BotsController {
       });
       return { version: number };
     });
+  }
+  /** Authorized API/teammate trigger: starts a published flow whose Start
+   * trigger is "api" for one contact that already has a conversation. */
+  @Post(":id/trigger") async trigger(
+    @Req() req: AuthRequest,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    this.write(req);
+    const flow = await this.find(req, id);
+    if (!flow.publishedVersion)
+      throw new BadRequestException("Publish the flow before starting it");
+    const { contactId } = parse(z.object({ contactId: uuid }).strict(), body);
+    const contact = await this.database.db.contact.findFirst({
+      where: { id: contactId, tenantId: req.auth.tenantId, deletedAt: null },
+    });
+    if (!contact) throw new NotFoundException();
+    const outcome = await this.database.db.$transaction(
+      (tx) =>
+        startTriggeredFlow(tx, {
+          tenantId: req.auth.tenantId,
+          contactId,
+          trigger: "api",
+          flowId: id,
+        }),
+      { timeout: 30000 },
+    );
+    if (!outcome.started) {
+      const messages = {
+        no_conversation:
+          "This contact has not messaged you yet, so there is no conversation to run in.",
+        active_session: "Another chatbot is already running for this contact.",
+        no_matching_flow:
+          "This flow's Start trigger is not set to 'Started by API or teammate'.",
+        not_started:
+          "The flow did not start (the contact may have opted out, or a teammate has taken over).",
+      } as const;
+      throw new ConflictException(messages[outcome.reason]);
+    }
+    await this.database.db.auditLog.create({
+      data: {
+        tenantId: req.auth.tenantId,
+        actorId: req.auth.userId,
+        action: "bot.triggered",
+        resourceId: outcome.executionId,
+      },
+    });
+    return outcome;
   }
   @Post(":id/unpublish") async unpublish(
     @Req() req: AuthRequest,

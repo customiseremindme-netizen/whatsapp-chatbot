@@ -2,6 +2,7 @@ import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import { spawn, ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { createDatabase } from "../../packages/database/src";
 import {
   Flow,
@@ -104,9 +105,9 @@ async function incoming(
   expect(result.status).toBe(201);
   return data.externalId;
 }
-async function save(flow: Flow, name: string) {
-  const created = await (await a.call("/bots", "POST", { name })).json();
-  const saved = await a.call(`/bots/${created.id}`, "PATCH", {
+async function save(flow: Flow, name: string, owner = a) {
+  const created = await (await owner.call("/bots", "POST", { name })).json();
+  const saved = await owner.call(`/bots/${created.id}`, "PATCH", {
     name,
     revision: created.revision,
     draft: flow,
@@ -114,15 +115,15 @@ async function save(flow: Flow, name: string) {
   expect(saved.status).toBe(200);
   return { id: created.id as string, revision: (await saved.json()).revision };
 }
-async function publish(flow: Flow, name: string) {
-  const created = await (await a.call("/bots", "POST", { name })).json();
-  const saved = await a.call(`/bots/${created.id}`, "PATCH", {
+async function publish(flow: Flow, name: string, owner = a) {
+  const created = await (await owner.call("/bots", "POST", { name })).json();
+  const saved = await owner.call(`/bots/${created.id}`, "PATCH", {
     name,
     revision: created.revision,
     draft: flow,
   });
   expect(saved.status).toBe(200);
-  const result = await a.call(`/bots/${created.id}/publish`, "POST", {
+  const result = await owner.call(`/bots/${created.id}/publish`, "POST", {
     revision: (await saved.json()).revision,
   });
   expect(result.status).toBe(201);
@@ -332,6 +333,250 @@ describe.sequential("media, keyword, save-input and assignment nodes", () => {
     expect(delivered!.media).toEqual(doc);
     expect(
       (await b.call(`/conversations/${conversationId}/messages`)).status,
+    ).toBe(404);
+  });
+  it("calls an allowed HTTP endpoint from the worker and branches on the result", async () => {
+    const received: Array<{ key: unknown; body: string }> = [];
+    let respond = 200;
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        received.push({ key: req.headers["idempotency-key"], body });
+        res.writeHead(respond, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "shipped" }));
+      });
+    });
+    await new Promise<void>((r) => server.listen(47811, "127.0.0.1", r));
+    try {
+      const flow: Flow = {
+        schemaVersion: 1,
+        nodes: [
+          makeNode("start", "start", 0, 0),
+          makeNode("order", "ask", 0, 100, {
+            text: "Order number?",
+            variable: "order_number",
+          }),
+          makeNode("call", "http_request", 0, 200, {
+            url: "http://127.0.0.1:47811/orders",
+            sendVariables: "order_number",
+            responseField: "status",
+            variable: "order_status",
+          }),
+          makeNode("ok", "text", 0, 300, { text: "Order is {{order_status}}" }),
+          makeNode("bad", "text", 300, 300, { text: "Lookup failed" }),
+          makeNode("end1", "end", 0, 400),
+          makeNode("end2", "end", 300, 400),
+        ],
+        edges: [
+          { id: "1", source: "start", target: "order" },
+          { id: "2", source: "order", target: "call" },
+          { id: "3", source: "call", target: "ok", sourceHandle: "true" },
+          { id: "4", source: "call", target: "bad", sourceHandle: "false" },
+          { id: "5", source: "ok", target: "end1" },
+          { id: "6", source: "bad", target: "end2" },
+        ],
+      };
+      const id = await publish(flow, "Order lookup");
+      const phone = "+15555550304";
+      await incoming("Hi", phone, id);
+      await until(execFor(phone), (e) => e?.status === "WAITING");
+      await incoming("A-1001", phone, id);
+      const done = await until(
+        execFor(phone),
+        (e) => e?.status === "COMPLETED",
+      );
+      expect((done!.variables as Record<string, string>).order_status).toBe(
+        "shipped",
+      );
+      expect(JSON.stringify(done!.logs)).toContain('"state":"succeeded"');
+      expect(received).toHaveLength(1);
+      expect(JSON.parse(received[0]!.body).variables).toEqual({
+        order_number: "A-1001",
+      });
+      expect(String(received[0]!.key)).toContain(done!.id);
+      expect(
+        await db.message.count({
+          where: {
+            conversationId: done!.conversationId,
+            text: "Order is shipped",
+          },
+        }),
+      ).toBe(1);
+      respond = 503;
+      const failPhone = "+15555550305";
+      await incoming("Hi", failPhone, id);
+      await until(execFor(failPhone), (e) => e?.status === "WAITING");
+      await incoming("A-1002", failPhone, id);
+      const failed = await until(
+        execFor(failPhone),
+        (e) => e?.status === "COMPLETED",
+      );
+      expect(JSON.stringify(failed!.logs)).toContain('"httpStatus":503');
+      expect(
+        await db.message.count({
+          where: {
+            conversationId: failed!.conversationId,
+            text: "Lookup failed",
+          },
+        }),
+      ).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+  it("refuses to publish an HTTP node aimed at a private address", async () => {
+    const draft = await save(
+      {
+        schemaVersion: 1,
+        nodes: [
+          makeNode("start", "start", 0, 0),
+          makeNode("call", "http_request", 0, 100, {
+            url: "https://169.254.169.254/latest/meta-data",
+          }),
+          makeNode("a", "end", 0, 200),
+          makeNode("b", "end", 200, 200),
+        ],
+        edges: [
+          { id: "1", source: "start", target: "call" },
+          { id: "2", source: "call", target: "a", sourceHandle: "true" },
+          { id: "3", source: "call", target: "b", sourceHandle: "false" },
+        ],
+      },
+      "Metadata probe",
+    );
+    expect(
+      (
+        await a.call(`/bots/${draft.id}/publish`, "POST", {
+          revision: draft.revision,
+        })
+      ).status,
+    ).toBe(400);
+  });
+  it("starts tag-added and API-triggered flows only through their own triggers", async () => {
+    const tagFlow: Flow = {
+      schemaVersion: 1,
+      nodes: [
+        makeNode("start", "start", 0, 0, {
+          trigger: "tag_added",
+          value: "VIP",
+        }),
+        makeNode("hello", "text", 0, 100, { text: "Welcome to VIP support" }),
+        makeNode("end", "end", 0, 200),
+      ],
+      edges: [
+        { id: "1", source: "start", target: "hello" },
+        { id: "2", source: "hello", target: "end" },
+      ],
+    };
+    const apiFlow: Flow = {
+      schemaVersion: 1,
+      nodes: [
+        makeNode("start", "start", 0, 0, { trigger: "api" }),
+        makeNode("ask", "ask", 0, 100, {
+          text: "Rate our service from 1 to 5",
+          variable: "rating",
+          inputKind: "number",
+        }),
+        makeNode("end", "end", 0, 200),
+      ],
+      edges: [
+        { id: "1", source: "start", target: "ask" },
+        { id: "2", source: "ask", target: "end" },
+      ],
+    };
+    const tagId = await publish(tagFlow, "VIP welcome", b);
+    const apiId = await publish(apiFlow, "Feedback", b);
+    const phone = "+15555550306";
+    // Customer text equal to the tag must not start a tag-triggered flow.
+    expect(
+      (
+        await b.call("/whatsapp/mock/inbound", "POST", {
+          externalId: randomUUID(),
+          phone,
+          text: "VIP",
+        })
+      ).status,
+    ).toBe(201);
+    const contact = await until(
+      () =>
+        db.contact.findFirst({
+          where: { tenantId: b.tenantId, phone },
+          include: { conversation: true },
+        }),
+      (c) => !!c?.conversation,
+    );
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(
+      await db.botExecution.count({ where: { tenantId: b.tenantId } }),
+    ).toBe(0);
+    expect(
+      (await b.call(`/contacts/${contact!.id}`, "PATCH", { tags: ["vip"] }))
+        .status,
+    ).toBe(200);
+    const tagged = await until(
+      () =>
+        db.botExecution.findFirst({
+          where: { tenantId: b.tenantId, contactId: contact!.id },
+        }),
+      (e) => e?.status === "COMPLETED",
+    );
+    await until(
+      () =>
+        db.message.findFirst({
+          where: {
+            conversationId: tagged!.conversationId,
+            text: "Welcome to VIP support",
+          },
+        }),
+      (m) => m?.status === "DELIVERED",
+    );
+    // Saving the same tags again does not re-trigger.
+    await b.call(`/contacts/${contact!.id}`, "PATCH", { tags: ["vip"] });
+    expect(
+      await db.botExecution.count({ where: { tenantId: b.tenantId } }),
+    ).toBe(1);
+    // The API trigger only starts flows whose Start trigger is "api".
+    expect(
+      (
+        await b.call(`/bots/${tagId}/trigger`, "POST", {
+          contactId: contact!.id,
+        })
+      ).status,
+    ).toBe(409);
+    const started = await b.call(`/bots/${apiId}/trigger`, "POST", {
+      contactId: contact!.id,
+    });
+    expect(started.status).toBe(201);
+    const outcome = await started.json();
+    expect(outcome).toMatchObject({ started: true, flowId: apiId });
+    const waiting = await db.botExecution.findUniqueOrThrow({
+      where: { id: outcome.executionId },
+    });
+    expect(waiting.status).toBe("WAITING");
+    const again = await b.call(`/bots/${apiId}/trigger`, "POST", {
+      contactId: contact!.id,
+    });
+    expect(again.status).toBe(409);
+    expect(JSON.stringify(await again.json())).toContain("already running");
+    // Contacts that never messaged have no conversation to run in.
+    const fresh = await (
+      await b.call("/contacts", "POST", {
+        name: "No chat",
+        phone: "+15555550307",
+      })
+    ).json();
+    expect(
+      (await b.call(`/bots/${apiId}/trigger`, "POST", { contactId: fresh.id }))
+        .status,
+    ).toBe(409);
+    // Another workspace cannot trigger this flow or target this contact.
+    expect(
+      (
+        await a.call(`/bots/${apiId}/trigger`, "POST", {
+          contactId: contact!.id,
+        })
+      ).status,
     ).toBe(404);
   });
 });
