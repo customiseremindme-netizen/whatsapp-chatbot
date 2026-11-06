@@ -279,3 +279,84 @@ test("edits interactive options and follows a clicked simulator branch", async (
     simulator.getByText("Selected quote", { exact: false }),
   ).toBeVisible();
 });
+test("edits a document node behind a keyword match and sees it in the simulator", async ({
+  page,
+}) => {
+  test.setTimeout(60000);
+  await page.goto("/register");
+  await page.getByLabel("Your name").fill("Media Owner");
+  await page.getByLabel("Business name").fill("Media Browser Workspace");
+  await page
+    .getByLabel("Email address")
+    .fill(`media-browser-${Date.now()}@example.com`);
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("MediaBrowserPassword!2026");
+  await page
+    .getByRole("button", { name: "Create workspace", exact: true })
+    .click();
+  await page
+    .getByRole("link", { name: "Chatbot Builder", exact: true })
+    .click();
+  await page.getByLabel("New flow name").fill("Price list sender");
+  await page.getByRole("button", { name: "Create flow", exact: true }).click();
+  const graph = {
+    schemaVersion: 1,
+    nodes: [
+      makeNode("start", "start", 0, 0),
+      makeNode("match", "keyword_match", 0, 120, { value: "price" }),
+      makeNode("doc", "send_document", 0, 240, {
+        mediaUrl: "https://files.example.com/list.pdf",
+      }),
+      makeNode("end", "end", 0, 360),
+      makeNode("other", "end", 280, 240),
+    ],
+    edges: [
+      { id: "1", source: "start", target: "match" },
+      { id: "2", source: "match", target: "doc", sourceHandle: "true" },
+      { id: "3", source: "match", target: "other", sourceHandle: "false" },
+      { id: "4", source: "doc", target: "end" },
+    ],
+  };
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "media.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(graph)),
+  });
+  await page.locator('.react-flow__node[data-id="doc"]').click();
+  await page
+    .getByLabel("Media link (https)")
+    .fill("http://insecure.example.com/list.pdf");
+  await expect(
+    page.getByText("doc: use a public https:// media link"),
+  ).toBeVisible();
+  await page
+    .getByLabel("Media link (https)")
+    .fill("https://files.example.com/list.pdf");
+  await page.getByLabel("File name shown").fill("Price list.pdf");
+  await page.getByLabel("Caption (optional)").fill("Our latest prices");
+  await expect(page.getByText("Draft saved", { exact: true })).toBeVisible({
+    timeout: 15000,
+  });
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Published version 1");
+  await page.getByRole("button", { name: "Test", exact: true }).click();
+  const simulator = page.locator("section").filter({
+    has: page.getByRole("heading", {
+      name: "Live engine simulator",
+      exact: true,
+    }),
+  });
+  await simulator.getByLabel("Simulated customer message").fill("Price please");
+  await simulator.getByRole("button", { name: "Send test" }).click();
+  await expect(
+    simulator.getByText("Execution: COMPLETED", { exact: true }),
+  ).toBeVisible({ timeout: 15000 });
+  const link = simulator.getByRole("link", { name: /Price list\.pdf/ });
+  await expect(link).toHaveAttribute(
+    "href",
+    "https://files.example.com/list.pdf",
+  );
+  await expect(link).toHaveAttribute("rel", /noreferrer/);
+  await expect(simulator.getByText("Our latest prices")).toBeVisible();
+});

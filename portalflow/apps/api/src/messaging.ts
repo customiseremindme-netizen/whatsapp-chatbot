@@ -20,6 +20,7 @@ import {
   contactSchema,
   incomingSchema,
   replySchema,
+  mediaSchema,
   messageSchema,
   pageSchema,
 } from "@portalflow/shared";
@@ -316,7 +317,13 @@ export class ConversationsController {
         },
         update: {},
       });
-      if (result.conversationId !== id || result.text !== input.text)
+      if (
+        result.conversationId !== id ||
+        result.text !== input.text ||
+        JSON.stringify(
+          result.media ? mediaSchema.parse(result.media) : null,
+        ) !== JSON.stringify(input.media ?? null)
+      )
         throw new ConflictException("Idempotency key already used");
       return result;
     });
@@ -500,7 +507,9 @@ export class MockWhatsAppController {
       event.phone !== data.phone ||
       event.text !== data.text ||
       JSON.stringify(event.reply ? replySchema.parse(event.reply) : null) !==
-        JSON.stringify(data.reply ?? null)
+        JSON.stringify(data.reply ?? null) ||
+      JSON.stringify(event.media ? mediaSchema.parse(event.media) : null) !==
+        JSON.stringify(data.media ?? null)
     )
       throw new ConflictException("Event ID already used");
     return { id: event.id, status: event.status, provider: "mock" };

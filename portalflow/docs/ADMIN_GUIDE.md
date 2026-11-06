@@ -34,6 +34,17 @@ Change product name, primary colour and support email. The navigation/public hea
 
 Search platform actions and review when they occurred, their actor/resource IDs, and saved details. This view is append-only through the API. Tenant activity logs remain separately tenant-scoped. Log retention/export UI is still pending.
 
+## For business users: new chatbot steps (plain language)
+
+Open **Chatbot Builder**, open a flow, and click a step in the left list to add it. Then click the step on the canvas to change it on the right.
+
+- **Send image / Send document** — paste a web link that starts with `https://` (for example a brochure stored on your website or Google Drive's public download link) and an optional caption. For documents you can type the file name the customer sees. You cannot upload files from your computer yet. A red message under "Flow validation" tells you if the link is not allowed.
+- **Save user input** — quietly waits for the customer's next message and remembers it under the name you type in "Variable" (for example `feedback`). You can show it later by writing `{{feedback}}` in a message.
+- **Keyword match** — checks what the customer wrote. Type words separated by commas (for example `price, rate, cost`). Connect the green "match" dot to the step for those words and the red "no match" dot to the other path. Leave "Check variable" as `trigger_text` to check the customer's first message.
+- **Assign agent** — choose a teammate; the conversation appears as assigned to them in the Inbox. The bot keeps going; add **Human handoff** if a person should take over.
+
+In the **Inbox**, you can paste an `https://` link under the reply box and pick Document or Image to send a file link with your reply. Everything is still sent through the practice (mock) WhatsApp connection, not to real phones.
+
 ## Not available yet
 
 Real WhatsApp connections/onboarding, broadcasts/campaigns, Meta template approval, invoices/payments, payment-backed subscriptions and remaining quotas, messaging pricing administration, full job/connection health, AI settings, integration secrets, domain management, data-export/deletion controls and a full content-management system. They must be implemented before advertising them as working. See CAPABILITY_MATRIX.md.

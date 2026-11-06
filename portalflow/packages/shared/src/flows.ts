@@ -2,19 +2,96 @@ import { z } from "zod";
 export const nodeKinds = [
   "start",
   "text",
+  "send_image",
+  "send_document",
   "ask",
+  "save_input",
   "buttons",
   "list",
   "delay",
   "condition",
+  "keyword_match",
   "set_variable",
   "apply_tag",
   "remove_tag",
   "create_lead",
+  "assign_agent",
   "handoff",
   "end",
 ] as const;
 export type NodeKind = (typeof nodeKinds)[number];
+/** Public HTTPS media link for provider-hosted fetching (Meta downloads links itself).
+ * PortalFlow never fetches it server-side; credentials, local names and IP literals are rejected. */
+export function isSafeMediaUrl(value: string): boolean {
+  if (value.length > 2000) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  return (
+    url.protocol === "https:" &&
+    !url.username &&
+    !url.password &&
+    host.includes(".") &&
+    !host.endsWith(".") &&
+    !/\.(localhost|local|internal|lan|home|arpa)$/.test(host) &&
+    !/^[\d.]+$/.test(host) &&
+    !host.startsWith("[")
+  );
+}
+export const mediaUrlSchema = z
+  .string()
+  .trim()
+  .max(2000)
+  .refine(isSafeMediaUrl, "Use a public https:// link without credentials");
+export const mediaFilenameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(240)
+  .refine(
+    (v) =>
+      ![...v].some((c) => c.charCodeAt(0) < 32 || '\\/:*?"<>|'.includes(c)),
+    "Remove path or control characters",
+  )
+  .refine((v) => !v.startsWith("."), "Filename cannot start with a dot");
+export const mediaSchema = z
+  .object({
+    kind: z.enum(["image", "document"]),
+    url: mediaUrlSchema,
+    filename: mediaFilenameSchema.optional(),
+  })
+  .strict()
+  .refine((v) => v.kind === "document" || v.filename === undefined, {
+    message: "Only documents carry a filename",
+  });
+export type MediaMessage = z.infer<typeof mediaSchema>;
+/** WhatsApp limits media captions to 1024 characters. */
+export const captionLimit = 1024;
+export function splitKeywords(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(",")
+        .map((k) => k.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+}
+export function keywordMatch(
+  input: string | undefined,
+  keywords: string,
+  mode: "equals" | "contains" | "exists" | "gte",
+): boolean {
+  const text = (input ?? "").trim().toLowerCase();
+  if (!text) return false;
+  return splitKeywords(keywords).some((k) =>
+    mode === "contains" ? text.includes(k) : text === k,
+  );
+}
 const key = z
   .string()
   .regex(/^[a-zA-Z][a-zA-Z0-9_]{0,49}$/)
@@ -48,6 +125,8 @@ export const flowNodeSchema = z
         timeoutSeconds: z.number().int().min(1).max(86400).default(86400),
         inputKind: z.enum(["text", "email", "number"]).default("text"),
         trigger: z.enum(["first", "keyword"]).default("first"),
+        mediaUrl: z.string().max(2000).default(""),
+        filename: z.string().max(240).default(""),
       })
       .strict(),
   })
@@ -110,9 +189,15 @@ export function validateFlow(input: unknown): string[] {
     )
       errors.push(`${node.id}: message text is required`);
     if (
-      ["ask", "buttons", "list", "condition", "set_variable"].includes(
-        node.type,
-      ) &&
+      [
+        "ask",
+        "save_input",
+        "buttons",
+        "list",
+        "condition",
+        "keyword_match",
+        "set_variable",
+      ].includes(node.type) &&
       !key.safeParse(node.data.variable).success
     )
       errors.push(`${node.id}: use a valid variable name`);
@@ -121,6 +206,42 @@ export function validateFlow(input: unknown): string[] {
       (!node.data.value.trim() || node.data.value.length > 40)
     )
       errors.push(`${node.id}: a tag of 1–40 characters is required`);
+    if (["send_image", "send_document"].includes(node.type)) {
+      if (!isSafeMediaUrl(node.data.mediaUrl))
+        errors.push(
+          `${node.id}: use a public https:// media link without credentials`,
+        );
+      if (node.data.text.length > captionLimit)
+        errors.push(
+          `${node.id}: captions are limited to ${captionLimit} characters`,
+        );
+      if (
+        node.type === "send_document" &&
+        node.data.filename &&
+        !mediaFilenameSchema.safeParse(node.data.filename).success
+      )
+        errors.push(`${node.id}: use a plain document filename`);
+      if (node.type === "send_image" && node.data.filename)
+        errors.push(`${node.id}: images do not take a filename`);
+    }
+    if (node.type === "keyword_match") {
+      const keywords = splitKeywords(node.data.value);
+      if (
+        keywords.length < 1 ||
+        keywords.length > 20 ||
+        keywords.some((k) => k.length > 50)
+      )
+        errors.push(
+          `${node.id}: list 1–20 comma-separated keywords of up to 50 characters`,
+        );
+      if (!["equals", "contains"].includes(node.data.operator))
+        errors.push(`${node.id}: keyword matching is exact or contains`);
+    }
+    if (
+      node.type === "assign_agent" &&
+      !z.string().uuid().safeParse(node.data.value).success
+    )
+      errors.push(`${node.id}: choose a teammate to assign`);
     if (["buttons", "list"].includes(node.type)) {
       const options = node.data.options;
       if (
@@ -146,7 +267,7 @@ export function validateFlow(input: unknown): string[] {
         )
       )
         errors.push(`${node.id}: connect exactly one branch per option`);
-    } else if (node.type === "condition") {
+    } else if (node.type === "condition" || node.type === "keyword_match") {
       if (
         outgoing.length !== 2 ||
         !outgoing.some((e) => e.sourceHandle === "true") ||
@@ -234,6 +355,11 @@ export function makeNode(
       trigger: "first",
       delaySeconds: 60,
       timeoutSeconds: 86400,
+      mediaUrl: "",
+      filename: "",
+      ...(type === "keyword_match"
+        ? { variable: "trigger_text", operator: "contains" as const }
+        : {}),
       ...data,
     },
   };

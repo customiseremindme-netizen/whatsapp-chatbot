@@ -23,8 +23,10 @@ import {
   quotationFlow,
   incomingSchema,
   replySchema,
+  mediaSchema,
   pageSchema,
 } from "@portalflow/shared";
+import type { Prisma } from "@portalflow/database";
 import { Database } from "./database";
 import { AuthRequest } from "./auth";
 import { parse } from "./controllers";
@@ -39,6 +41,34 @@ export class BotsController {
       throw new ForbiddenException(
         "Manager or workspace administrator required",
       );
+  }
+  /** Assign Agent nodes must name a current non-viewer member of this workspace. */
+  private async memberErrors(
+    db: Pick<Prisma.TransactionClient, "tenantMembership">,
+    tenantId: string,
+    draft: unknown,
+  ) {
+    const parsed = flowSchema.safeParse(draft);
+    if (!parsed.success) return [];
+    const nodes = parsed.data.nodes.filter(
+      (n) => n.type === "assign_agent" && uuid.safeParse(n.data.value).success,
+    );
+    if (!nodes.length) return [];
+    const members = new Set(
+      (
+        await db.tenantMembership.findMany({
+          where: {
+            tenantId,
+            role: { not: "VIEWER" },
+            userId: { in: nodes.map((n) => n.data.value) },
+          },
+          select: { userId: true },
+        })
+      ).map((m) => m.userId),
+    );
+    return nodes
+      .filter((n) => !members.has(n.data.value))
+      .map((n) => `${n.id}: the assigned teammate is not an active agent here`);
   }
   private async find(req: AuthRequest, id: string) {
     const flow = await this.database.db.botFlow.findFirst({
@@ -120,7 +150,14 @@ export class BotsController {
     @Param("id") id: string,
   ) {
     const flow = await this.find(req, id);
-    const errors = validateFlow(flow.draft);
+    const errors = [
+      ...validateFlow(flow.draft),
+      ...(await this.memberErrors(
+        this.database.db,
+        req.auth.tenantId,
+        flow.draft,
+      )),
+    ];
     return { valid: errors.length === 0, errors };
   }
   @Post(":id/publish") async publish(
@@ -141,7 +178,10 @@ export class BotsController {
       });
       if (flow.revision !== revision)
         throw new ConflictException("Save the latest draft before publishing");
-      const errors = validateFlow(flow.draft);
+      const errors = [
+        ...validateFlow(flow.draft),
+        ...(await this.memberErrors(tx, req.auth.tenantId, flow.draft)),
+      ];
       if (errors.length) throw new BadRequestException({ message: errors });
       const latest = await tx.botFlowVersion.findFirst({
         where: { flowId: id, tenantId: req.auth.tenantId },
@@ -260,6 +300,8 @@ export class BotsController {
       event.text !== input.text ||
       JSON.stringify(event.reply ? replySchema.parse(event.reply) : null) !==
         JSON.stringify(input.reply ?? null) ||
+      JSON.stringify(event.media ? mediaSchema.parse(event.media) : null) !==
+        JSON.stringify(input.media ?? null) ||
       event.simulationFlowId !== id
     )
       throw new ConflictException("Event ID already used");

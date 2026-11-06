@@ -8,7 +8,7 @@ Read START_HERE.md for the nontechnical owner and CLAUDE_PROMPT.md for continuat
 - apps/api: Nest app.ts registers controllers and global auth/security. accounts.ts and controllers.ts manage auth/workspaces/team; messaging.ts handles contacts/inbox/mock events; bots.ts handles flows/leads; admin.ts contains the platform guard/admin APIs/public branding read.
 - apps/worker: BullMQ recurring SMTP and messaging-outbox jobs. EMAIL_DELIVERY_ENABLED=false disables only email for tests.
 - packages/core: shared persistent engine, mock provider, durable inbound/outbound drain and scheduled-execution reconciliation. Do not create a second simulator engine.
-- packages/database: Prisma schema/client factory/migrations/seed. Eight migrations at this handoff, including global plan/configuration/platform-audit tables and tenant-scoped manual grant snapshots.
+- packages/database: Prisma schema/client factory/migrations/seed. Nine migrations at this handoff, including global plan/configuration/platform-audit tables, tenant-scoped manual grant snapshots and link-based media payloads.
 - packages/shared: Zod contracts, flow schemas/validation/templates and admin configuration contracts.
 - packages/ui/config: reusable primitives and strict compiler defaults.
 
@@ -54,4 +54,4 @@ The source archive excludes .env, node_modules, compiled output, test traces, da
 
 ## What to do next
 
-Run the baseline checks, then choose the next unfinished milestone in PRODUCT_REQUIREMENTS.md. Highest-impact gaps are remaining media/automation actions, official Meta with authenticated webhook ingress, opt-in campaigns/template management, delivered-event pricing, and payment-provider integration and remaining subscription quotas with the initial admin panel. Finish no-code management interfaces as those backend capabilities become real. Keep local mock paths and production provider states explicitly separated.
+Run the baseline checks, then choose the next unfinished milestone in PRODUCT_REQUIREMENTS.md. Highest-impact gaps are the restricted HTTP and approved-template nodes plus non-message triggers, official Meta with authenticated webhook ingress, opt-in campaigns/template management, delivered-event pricing, and payment-provider integration and remaining subscription quotas with the initial admin panel. Finish no-code management interfaces as those backend capabilities become real. Keep local mock paths and production provider states explicitly separated.

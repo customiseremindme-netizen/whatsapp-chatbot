@@ -4,7 +4,7 @@ Implemented locally with the mock WhatsApp provider. The visual editor and simul
 
 ## Implemented nodes
 
-Start Trigger, Send Text, Ask Question, Delay, Reply Buttons, Interactive List, Condition, Set Variable, Apply Tag, Remove Tag, Create Lead, Human Handoff, End Flow. Questions validate text, email, or non-negative numeric input. Conditions support equals, contains, exists and numeric greater-than-or-equal. Text substitutes `{{variable}}` as plain text; no JavaScript, expression interpreter or arbitrary code runs.
+Start Trigger, Send Text, Send Image, Send Document, Ask Question, Save User Input, Delay, Reply Buttons, Interactive List, Condition, Keyword Match, Set Variable, Apply Tag, Remove Tag, Create Lead, Assign Agent, Human Handoff, End Flow (17 of the 19 required kinds plus the extra Create Lead). Questions validate text, email, or non-negative numeric input. Conditions support equals, contains, exists and numeric greater-than-or-equal. Text substitutes `{{variable}}` as plain text; no JavaScript, expression interpreter or arbitrary code runs.
 
 The editor uses @xyflow/react with a node library, drag/drop, connection handles, selected-node properties, pan/zoom/minimap, delete/duplicate, undo/redo, debounced draft saves, graph validation, publish/unpublish, immutable version history, version-to-draft restoration, JSON export/import and a simulator. Import size is capped at 100 KB. Draft edits use a revision compare-and-swap; conflicting edits require reload rather than silently overwriting another editor.
 
@@ -28,9 +28,18 @@ Save and publish, then open Test. Each reset selects a fresh synthetic mock phon
 
 Ten importable templates are present and exercised through the real worker: Welcome, Lead Generation, Product Enquiry, Service Enquiry, Quotation Request, Order Status, Appointment Booking, FAQ, Customer Support and Human Agent Transfer. Order, FAQ, product and appointment templates collect an enquiry and hand off for verified information. They never invent prices, order statuses, knowledge-base answers or confirmed availability.
 
+## Media, keyword, save-input and assignment nodes
+
+- **Send Image / Send Document** send a link-based media message with an optional caption (max 1024 characters, WhatsApp's caption limit). The link must be a public `https://` URL without credentials; `localhost`, `.local`/`.internal`-style names and IP literals are rejected. PortalFlow never downloads the link itself (the provider does), so this is not an SSRF path. Documents may carry a plain display filename (no path or control characters). The link is fixed at publish time; variables are not substituted into URLs. File upload/S3 storage is not implemented yet.
+- **Save User Input** waits silently (no prompt) for the customer's next message and stores it in a variable, with the same text/email/number validation, answer deadline and takeover behaviour as Ask Question.
+- **Keyword Match** checks a variable against comma-separated keywords (1–20, up to 50 characters each, case-insensitive) in "contains" or "exact" mode and follows its match/no-match branch. Every new execution stores `trigger_text`, the message that started the flow, so a first-message flow can route on what the customer wrote.
+- **Assign Agent** assigns the conversation to a chosen teammate. Validate/publish rejects a user who is not a current non-viewer member of the workspace. At run time the membership is checked again; if the person was removed meanwhile, the node logs `skipped_not_member` and the flow continues. Assignment does not pause the bot; use Human Handoff for that.
+
+Outgoing and incoming messages store an optional validated `media` JSON payload (`{kind, url, filename?}`). The mock provider validates it and refuses to combine media with interactive options. The inbox and simulator show media as an outbound link (opened with `noopener noreferrer`) rather than embedding remote images, so the strict `img-src` CSP is unchanged and no remote image loads automatically. Media-only customer messages are stored; an Ask/Save Input expecting text treats them as invalid input.
+
 ## Not implemented yet
 
-Image/document nodes, standalone Save Input/Keyword nodes, restricted HTTP action, automatic agent assignment nodes, approved templates, contact-tag/contact-created/API/scheduled triggers, AI and outbound integration actions. These are absent from the node library rather than nonfunctional placeholders. Live Meta delivery is still pending. The complete 19-node and multi-trigger specification is not claimed complete.
+Restricted HTTP Request and Send Approved Template nodes (they depend on the SSRF-safe HTTP client and Meta template management milestones), contact-tag/contact-created/API/scheduled triggers, media upload/storage, AI and outbound integration actions. These are absent from the node library rather than nonfunctional placeholders. Live Meta delivery is still pending. The complete 19-node and multi-trigger specification is not claimed complete.
 
 ## Durable delays
 

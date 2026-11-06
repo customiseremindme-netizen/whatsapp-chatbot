@@ -7,30 +7,35 @@ import {
 export * from "./entitlements";
 import {
   interactiveSchema,
+  mediaSchema,
   replySchema,
   type InteractiveMessage,
+  type MediaMessage,
 } from "@portalflow/shared";
 import { executeInbound } from "./engine";
 export { executeInbound, processScheduledExecutions } from "./engine";
 import { PrismaClient, Prisma, MessageStatus } from "@portalflow/database";
+export interface OutboundPayload {
+  messageId: string;
+  to: string;
+  /** Message body, or the caption when media is attached. */
+  text: string;
+  interactive?: InteractiveMessage;
+  media?: MediaMessage;
+}
 export interface WhatsAppProvider {
   readonly name: string;
-  send(input: {
-    messageId: string;
-    to: string;
-    text: string;
-    interactive?: InteractiveMessage;
-  }): Promise<{ providerId: string; status: "SENT" | "DELIVERED" }>;
+  send(
+    input: OutboundPayload,
+  ): Promise<{ providerId: string; status: "SENT" | "DELIVERED" }>;
 }
 export class MockWhatsAppProvider implements WhatsAppProvider {
   readonly name = "mock";
-  async send(input: {
-    messageId: string;
-    to: string;
-    text: string;
-    interactive?: InteractiveMessage;
-  }) {
+  async send(input: OutboundPayload) {
     if (input.interactive) interactiveSchema.parse(input.interactive);
+    if (input.media) mediaSchema.parse(input.media);
+    if (input.interactive && input.media)
+      throw new Error("A message cannot combine media and interactive options");
     return {
       providerId: `mock-out-${input.messageId}`,
       status: "DELIVERED" as const,
@@ -78,6 +83,7 @@ export async function drainMessaging(
           tenantId: string;
           externalId: string;
           reply: Prisma.JsonValue;
+          media: Prisma.JsonValue;
           simulationFlowId: string | null;
           phone: string;
           text: string;
@@ -169,6 +175,7 @@ export async function drainMessaging(
             status: "RECEIVED",
             text: event.text,
             ...(event.reply ? { reply: replySchema.parse(event.reply) } : {}),
+            ...(event.media ? { media: mediaSchema.parse(event.media) } : {}),
             idempotencyKey: `in:${event.externalId}`,
             providerId: `mock-in-${event.id}`,
             events: { create: { status: "RECEIVED" } },
@@ -207,6 +214,7 @@ export async function drainMessaging(
           botExecutionId: string | null;
           executionStatus: string | null;
           interactive: Prisma.JsonValue;
+          media: Prisma.JsonValue;
         }>
       >`SELECT m.*, b.status AS "executionStatus" FROM "Message" m JOIN "Tenant" t ON t.id=m."tenantId" JOIN "Conversation" c ON c.id=m."conversationId" LEFT JOIN "BotExecution" b ON b.id=m."botExecutionId" WHERE m.status='QUEUED' AND t."suspendedAt" IS NULL AND (m."botExecutionId" IS NULL OR NOT c."humanTakeover" OR b.status='HANDOFF') ORDER BY m."tenantId", m.sequence LIMIT 20 FOR UPDATE OF m SKIP LOCKED`;
       for (const message of messages) {
@@ -259,6 +267,9 @@ export async function drainMessaging(
               text: message.text,
               ...(message.interactive
                 ? { interactive: interactiveSchema.parse(message.interactive) }
+                : {}),
+              ...(message.media
+                ? { media: mediaSchema.parse(message.media) }
                 : {}),
             });
           } catch {

@@ -37,14 +37,14 @@ Workspace/account lists are currently unpaginated; audit logs are bounded. Conta
 - GET/POST `/contacts`; GET/PATCH/DELETE `/contacts/:id`. DELETE archives and suppresses; it is not legal data erasure. Phone identity is immutable in this milestone.
 - POST `/contacts/:id/consent` with `{optedIn,source}` records explicit evidence; creation never opts a contact in.
 - GET `/conversations` supports optional `status` and `assignedUserId`; GET `/conversations/:id` loads one authorized conversation.
-- GET `/conversations/:id/messages` returns a reverse-chronological page in display order; POST accepts `{text,idempotencyKey}` where the key is a UUID. It queues a message and enables takeover. Sending requires an active service window and a non-suppressed contact.
+- GET `/conversations/:id/messages` returns a reverse-chronological page in display order; POST accepts `{text,idempotencyKey,media?}` where the key is a UUID and `media` is `{kind:"image"|"document",url,filename?}` (public https link; text becomes an optional caption of up to 1024 characters). Reusing a key with different text or media returns 409. It queues a message and enables takeover. Sending requires an active service window and a non-suppressed contact.
 - PATCH `/conversations/:id` accepts `status` and/or `unread`.
 - POST `/conversations/:id/assign` accepts `{userId}` or null; the user must belong to the tenant and not be a Viewer.
 - POST `/conversations/:id/takeover` and `/release` persist the handoff state. Releasing resumes a paused bot state; the next customer input continues execution.
 - GET/POST `/conversations/:id/notes` reads/adds internal notes; POST body `{text}`.
-- POST `/whatsapp/mock/inbound` accepts `{externalId,phone,text}` and persists a duplicate-safe event for asynchronous processing. It is authenticated and explicitly mock-only, not a Meta webhook.
+- POST `/whatsapp/mock/inbound` accepts `{externalId,phone,text,media?}` (text may be empty when media is attached) and persists a duplicate-safe event for asynchronous processing. It is authenticated and explicitly mock-only, not a Meta webhook.
 
-All messaging writes reject Viewers. WebSocket handshakes require the configured Origin and access cookie. The server selects the tenant from the session; clients cannot choose rooms. Notifications contain no message body. Live Meta webhooks, media, interactive/template messages and billing endpoints are not yet implemented.
+All messaging writes reject Viewers. WebSocket handshakes require the configured Origin and access cookie. The server selects the tenant from the session; clients cannot choose rooms. Notifications contain no message body. Live Meta webhooks, media upload, template messages and billing endpoints are not yet implemented.
 
 
 ## Bots and leads

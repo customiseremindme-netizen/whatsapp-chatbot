@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { mediaSchema, captionLimit, type MediaMessage } from "./flows";
 export const roles = ["OWNER", "ADMIN", "MANAGER", "AGENT", "VIEWER"] as const;
 export type Role = (typeof roles)[number];
 export const emailSchema = z.string().trim().toLowerCase().email().max(254);
@@ -120,20 +121,32 @@ export const replySchema = z
   })
   .strict();
 export type InteractiveReply = z.infer<typeof replySchema>;
+/** Text is optional only when media is attached; media captions follow WhatsApp's 1024 limit. */
+function textOrMedia(v: { text: string; media?: MediaMessage }) {
+  return v.media ? v.text.length <= captionLimit : v.text.length > 0;
+}
+const textOrMediaIssue = {
+  message: `Enter a message, or attach media with a caption of up to ${captionLimit} characters`,
+  path: ["text"],
+};
 export const incomingSchema = z
   .object({
     externalId: z.string().uuid(),
     reply: replySchema.optional(),
     phone: phoneSchema,
-    text: z.string().trim().min(1).max(4096),
+    text: z.string().trim().max(4096).default(""),
+    media: mediaSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(textOrMedia, textOrMediaIssue);
 export const messageSchema = z
   .object({
-    text: z.string().trim().min(1).max(4096),
+    text: z.string().trim().max(4096).default(""),
+    media: mediaSchema.optional(),
     idempotencyKey: z.string().uuid(),
   })
-  .strict();
+  .strict()
+  .refine(textOrMedia, textOrMediaIssue);
 export const pageSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
@@ -155,6 +168,7 @@ export interface MessageRecord {
   idempotencyKey: string;
   interactive: InteractiveMessage | null;
   reply: InteractiveReply | null;
+  media: MediaMessage | null;
   id: string;
   direction: "INBOUND" | "OUTBOUND";
   status: string;

@@ -196,6 +196,7 @@ model Conversation {
 model Message {
   interactive Json?
   reply Json?
+  media Json?
   sequence Int @unique @default(autoincrement())
   id String @id @default(uuid()) @db.Uuid
   tenantId String @db.Uuid
@@ -233,6 +234,7 @@ model MessageEvent {
 model InboundEvent {
   error String?
   reply Json?
+  media Json?
   id String @id @default(uuid()) @db.Uuid
   tenantId String @db.Uuid
   externalId String

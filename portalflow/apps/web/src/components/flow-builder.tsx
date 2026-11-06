@@ -33,6 +33,7 @@ import {
   validateFlow,
   MessageRecord,
   PageResult,
+  Member,
 } from "@portalflow/shared";
 import { Button, Input, Alert } from "@portalflow/ui";
 import {
@@ -48,6 +49,7 @@ import {
 } from "lucide-react";
 import { api, post } from "../lib/api";
 import { useIdentity } from "./workspace";
+import { MediaLink } from "./media-link";
 type CanvasNode = Node<FlowNode["data"], NodeKind>;
 type Bot = {
   id: string;
@@ -79,15 +81,20 @@ type Execution = {
 const labels: Record<NodeKind, string> = {
   start: "Start trigger",
   text: "Send text",
+  send_image: "Send image",
+  send_document: "Send document",
   ask: "Ask a question",
+  save_input: "Save user input",
   buttons: "Reply buttons",
   list: "Interactive list",
   delay: "Delay",
   condition: "Condition",
+  keyword_match: "Keyword match",
   set_variable: "Set variable",
   apply_tag: "Apply tag",
   remove_tag: "Remove tag",
   create_lead: "Create lead",
+  assign_agent: "Assign agent",
   handoff: "Human handoff",
   end: "End flow",
 };
@@ -103,7 +110,7 @@ function FlowCard({ data, type, selected }: NodeProps<CanvasNode>) {
       </div>
       <p className="text-sm font-semibold">{data.label}</p>
       <p className="mt-1 line-clamp-2 text-xs text-slate-500">
-        {data.text || data.variable || data.value}
+        {data.text || data.mediaUrl || data.variable || data.value}
       </p>
       {["buttons", "list"].includes(type ?? "") ? (
         <div className="mt-3 space-y-2">
@@ -119,10 +126,10 @@ function FlowCard({ data, type, selected }: NodeProps<CanvasNode>) {
             </div>
           ))}
         </div>
-      ) : type === "condition" ? (
+      ) : type === "condition" || type === "keyword_match" ? (
         <>
           <span className="absolute -bottom-5 left-4 text-xs text-green-600">
-            true
+            {type === "keyword_match" ? "match" : "true"}
           </span>
           <Handle
             type="source"
@@ -131,7 +138,7 @@ function FlowCard({ data, type, selected }: NodeProps<CanvasNode>) {
             style={{ left: "25%" }}
           />
           <span className="absolute -bottom-5 right-4 text-xs text-red-500">
-            false
+            {type === "keyword_match" ? "no match" : "false"}
           </span>
           <Handle
             type="source"
@@ -222,6 +229,11 @@ function Editor({ id }: { id: string }) {
     queryFn: () => api<Execution[]>(`/bots/${id}/executions`),
     enabled: !!bot.data && showSim,
     refetchInterval: showSim ? 1500 : false,
+  });
+  const members = useQuery({
+    queryKey: ["members", me.tenant.id],
+    queryFn: () => api<Member[]>("/tenants/members"),
+    enabled: !!bot.data,
   });
   const execution = executions.data?.find((e) => e.contact.phone === simPhone);
   const messages = useQuery({
@@ -617,11 +629,52 @@ function Editor({ id }: { id: string }) {
                   onChange={(e) => property("label", e.target.value)}
                 />
               </div>
-              {["text", "ask", "buttons", "list", "handoff"].includes(
-                active.type ?? "",
-              ) && (
+              {["send_image", "send_document"].includes(active.type ?? "") && (
+                <div className="space-y-3">
+                  <div>
+                    <label htmlFor="node-media-url">Media link (https)</label>
+                    <Input
+                      id="node-media-url"
+                      type="url"
+                      placeholder="https://example.com/brochure.pdf"
+                      value={active.data.mediaUrl}
+                      disabled={!editable}
+                      onChange={(e) => property("mediaUrl", e.target.value)}
+                    />
+                    <p className="mt-1 text-[10px] text-slate-500">
+                      A public link WhatsApp can download. Uploads are not
+                      available yet.
+                    </p>
+                  </div>
+                  {active.type === "send_document" && (
+                    <div>
+                      <label htmlFor="node-filename">File name shown</label>
+                      <Input
+                        id="node-filename"
+                        placeholder="Price list.pdf"
+                        value={active.data.filename}
+                        disabled={!editable}
+                        onChange={(e) => property("filename", e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+              {[
+                "text",
+                "ask",
+                "buttons",
+                "list",
+                "handoff",
+                "send_image",
+                "send_document",
+              ].includes(active.type ?? "") && (
                 <div>
-                  <label htmlFor="node-message">Message</label>
+                  <label htmlFor="node-message">
+                    {["send_image", "send_document"].includes(active.type ?? "")
+                      ? "Caption (optional)"
+                      : "Message"}
+                  </label>
                   <textarea
                     id="node-message"
                     className="input min-h-28 text-sm"
@@ -634,11 +687,21 @@ function Editor({ id }: { id: string }) {
                   </p>
                 </div>
               )}
-              {["ask", "buttons", "list", "condition", "set_variable"].includes(
-                active.type ?? "",
-              ) && (
+              {[
+                "ask",
+                "save_input",
+                "buttons",
+                "list",
+                "condition",
+                "keyword_match",
+                "set_variable",
+              ].includes(active.type ?? "") && (
                 <div>
-                  <label htmlFor="node-variable">Variable</label>
+                  <label htmlFor="node-variable">
+                    {active.type === "keyword_match"
+                      ? "Check variable"
+                      : "Variable"}
+                  </label>
                   <Input
                     id="node-variable"
                     value={active.data.variable}
@@ -647,7 +710,12 @@ function Editor({ id }: { id: string }) {
                   />
                 </div>
               )}
-              {active.type === "ask" && (
+              {active.type === "keyword_match" && (
+                <p className="-mt-2 text-[10px] text-slate-500">
+                  trigger_text holds the message that started the flow.
+                </p>
+              )}
+              {["ask", "save_input"].includes(active.type ?? "") && (
                 <div>
                   <label htmlFor="input-type">Answer type</label>
                   <select
@@ -757,7 +825,9 @@ function Editor({ id }: { id: string }) {
                   </p>
                 </div>
               )}
-              {["ask", "buttons", "list"].includes(active.type ?? "") && (
+              {["ask", "save_input", "buttons", "list"].includes(
+                active.type ?? "",
+              ) && (
                 <div>
                   <label htmlFor="answer-timeout">
                     Answer timeout (seconds)
@@ -796,6 +866,45 @@ function Editor({ id }: { id: string }) {
                   </select>
                 </div>
               )}
+              {active.type === "keyword_match" && (
+                <div>
+                  <label htmlFor="match-mode">Match mode</label>
+                  <select
+                    id="match-mode"
+                    className="input"
+                    value={active.data.operator}
+                    disabled={!editable}
+                    onChange={(e) => property("operator", e.target.value)}
+                  >
+                    <option value="contains">Message contains a keyword</option>
+                    <option value="equals">Message is exactly a keyword</option>
+                  </select>
+                </div>
+              )}
+              {active.type === "assign_agent" && (
+                <div>
+                  <label htmlFor="assign-member">Assign to</label>
+                  <select
+                    id="assign-member"
+                    className="input text-sm"
+                    value={active.data.value}
+                    disabled={!editable}
+                    onChange={(e) => property("value", e.target.value)}
+                  >
+                    <option value="">Choose a teammate</option>
+                    {members.data
+                      ?.filter((m) => m.role !== "VIEWER")
+                      .map((m) => (
+                        <option key={m.user.id} value={m.user.id}>
+                          {m.user.name} ({m.role.toLowerCase()})
+                        </option>
+                      ))}
+                  </select>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    The bot keeps running; add Human handoff to pause it.
+                  </p>
+                </div>
+              )}
               {active.type === "start" && (
                 <div>
                   <label htmlFor="trigger">Trigger</label>
@@ -813,6 +922,7 @@ function Editor({ id }: { id: string }) {
               )}
               {([
                 "condition",
+                "keyword_match",
                 "set_variable",
                 "apply_tag",
                 "remove_tag",
@@ -820,7 +930,11 @@ function Editor({ id }: { id: string }) {
                 (active.type === "start" &&
                   active.data.trigger === "keyword")) && (
                 <div>
-                  <label htmlFor="node-value">Value</label>
+                  <label htmlFor="node-value">
+                    {active.type === "keyword_match"
+                      ? "Keywords (comma separated)"
+                      : "Value"}
+                  </label>
                   <Input
                     id="node-value"
                     value={active.data.value}
@@ -966,6 +1080,7 @@ function Editor({ id }: { id: string }) {
                     <strong className="mr-2 text-xs">
                       {m.direction === "OUTBOUND" ? "Bot" : "Customer"}
                     </strong>
+                    {m.media && <MediaLink media={m.media} />}
                     {m.text}
                     {m.interactive && (
                       <span className="mt-2 flex flex-wrap gap-2">

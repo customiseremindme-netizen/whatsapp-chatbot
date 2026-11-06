@@ -7,8 +7,10 @@ import {
   condition,
   interpolate,
   emailSchema,
+  keywordMatch,
   type InteractiveReply,
   type InteractiveMessage,
+  type MediaMessage,
 } from "@portalflow/shared";
 function jsonVariables(value: Prisma.JsonValue): Record<string, string> {
   const result: Record<string, string> = {};
@@ -174,7 +176,11 @@ export async function executeInbound(
           conversationId,
           flowVersionId: version.id,
           currentNode: start.id,
-          variables: { phone: conversation.contact.phone },
+          // trigger_text lets Keyword Match branch on the message that started the flow.
+          variables: {
+            phone: conversation.contact.phone,
+            trigger_text: event.text.slice(0, 1000),
+          },
         },
         include: { flowVersion: true },
       });
@@ -206,8 +212,9 @@ export async function executeInbound(
     text: string,
     key: string,
     interactive?: InteractiveMessage,
+    media?: MediaMessage,
   ) {
-    if (!text.trim()) return;
+    if (!text.trim() && !media) return;
     await tx.message.createMany({
       data: [
         {
@@ -215,10 +222,11 @@ export async function executeInbound(
           conversationId,
           direction: "OUTBOUND",
           status: "QUEUED",
-          text: interpolate(text, variables),
+          text: interpolate(text, variables).slice(0, media ? 1024 : 4096),
           idempotencyKey: `bot:${execution!.id}:${key}`,
           botExecutionId: execution!.id,
           ...(interactive ? { interactive } : {}),
+          ...(media ? { media } : {}),
         },
       ],
       skipDuplicates: true,
@@ -290,7 +298,11 @@ export async function executeInbound(
     // A replayed menu reply must never answer a subsequent free-text question.
     if (event.reply) return;
     const waiting = flow.nodes.find((n) => n.id === current);
-    if (!waiting || waiting.type !== "ask" || !execution.waitingKey) {
+    if (
+      !waiting ||
+      !["ask", "save_input"].includes(waiting.type) ||
+      !execution.waitingKey
+    ) {
       await tx.botExecution.update({
         where: { id: execution.id },
         data: { status: "FAILED", error: "Invalid waiting state" },
@@ -314,7 +326,7 @@ export async function executeInbound(
     variables[execution.waitingKey] = input;
     logs.push({
       nodeId: current,
-      type: "ask",
+      type: waiting.type,
       state: "answered",
       at: new Date().toISOString(),
     });
@@ -344,6 +356,55 @@ export async function executeInbound(
       case "text":
         await send(node.data.text, `${node.id}:${steps}`);
         break;
+      case "send_image":
+      case "send_document":
+        await send(node.data.text, `${node.id}:${steps}`, undefined, {
+          kind: node.type === "send_image" ? "image" : "document",
+          url: node.data.mediaUrl,
+          ...(node.type === "send_document" && node.data.filename
+            ? { filename: node.data.filename }
+            : {}),
+        });
+        break;
+      case "save_input":
+        // Waits silently for the customer's next message and stores it.
+        waitingKey = node.data.variable;
+        status = "WAITING";
+        waitExpiresAt = new Date(Date.now() + node.data.timeoutSeconds * 1000);
+        break;
+      case "keyword_match": {
+        const branch = keywordMatch(
+          variables[node.data.variable],
+          node.data.value,
+          node.data.operator,
+        );
+        logs.push({ nodeId: node.id, branch });
+        current = nextNode(flow, node.id, branch) ?? "";
+        continue;
+      }
+      case "assign_agent": {
+        // Only active, non-viewer members of this tenant can receive a conversation.
+        const member = await tx.tenantMembership.findFirst({
+          where: {
+            tenantId: event.tenantId,
+            userId: node.data.value,
+            role: { not: "VIEWER" },
+          },
+          select: { userId: true },
+        });
+        if (member)
+          await tx.conversation.update({
+            where: { id: conversationId },
+            data: { assignedUserId: member.userId },
+          });
+        logs.push({
+          nodeId: node.id,
+          type: "assign_agent",
+          state: member ? "assigned" : "skipped_not_member",
+          at: new Date().toISOString(),
+        });
+        break;
+      }
       case "buttons":
       case "list":
         await send(node.data.text, `${node.id}:${steps}`, {

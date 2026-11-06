@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { api, post } from "../../../lib/api";
 import { useIdentity } from "../../../components/workspace";
+import { MediaLink } from "../../../components/media-link";
 type Note = { id: string; text: string; createdAt: string };
 export default function Inbox() {
   const me = useIdentity(),
@@ -36,6 +37,9 @@ export default function Inbox() {
     [simulate, setSimulate] = useState(false),
     [phone, setPhone] = useState(""),
     [incoming, setIncoming] = useState(""),
+    [incomingMedia, setIncomingMedia] = useState(""),
+    [replyMedia, setReplyMedia] = useState(""),
+    [replyKind, setReplyKind] = useState<"image" | "document">("document"),
     [live, setLive] = useState(false);
   const writable = me.role !== "VIEWER";
   const list = useQuery({
@@ -143,8 +147,12 @@ export default function Inbox() {
                 externalId: crypto.randomUUID(),
                 phone,
                 text: incoming,
+                ...(incomingMedia.trim()
+                  ? { media: { kind: "image", url: incomingMedia.trim() } }
+                  : {}),
               });
               setIncoming("");
+              setIncomingMedia("");
               setSimulate(false);
             });
           }}
@@ -163,9 +171,19 @@ export default function Inbox() {
             <label htmlFor="sim-text">Customer message</label>
             <Input
               id="sim-text"
-              required
+              required={!incomingMedia.trim()}
               value={incoming}
               onChange={(e) => setIncoming(e.target.value)}
+            />
+          </div>
+          <div className="min-w-48 flex-1">
+            <label htmlFor="sim-media">Customer image link (optional)</label>
+            <Input
+              id="sim-media"
+              type="url"
+              placeholder="https://example.com/photo.jpg"
+              value={incomingMedia}
+              onChange={(e) => setIncomingMedia(e.target.value)}
             />
           </div>
           <Button disabled={busy}>Receive test message</Button>
@@ -356,6 +374,7 @@ export default function Inbox() {
                     <div
                       className={`max-w-[85%] rounded-2xl p-3 ${m.direction === "OUTBOUND" ? "bg-blue-600 text-white" : "border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800"}`}
                     >
+                      {m.media && <MediaLink media={m.media} />}
                       <p className="whitespace-pre-wrap break-words text-sm">
                         {m.text}
                         {m.interactive && (
@@ -410,8 +429,12 @@ export default function Inbox() {
                     await post(`/conversations/${selected}/messages`, {
                       text,
                       idempotencyKey,
+                      ...(replyMedia.trim()
+                        ? { media: { kind: replyKind, url: replyMedia.trim() } }
+                        : {}),
                     });
                     setText("");
+                    setReplyMedia("");
                     setHistoryPage(1);
                   });
                 }}
@@ -424,13 +447,36 @@ export default function Inbox() {
                     }
                     value={text}
                     onChange={(e) => setText(e.target.value)}
-                    required
-                    maxLength={4096}
+                    required={!replyMedia.trim()}
+                    maxLength={replyMedia.trim() ? 1024 : 4096}
                     disabled={!writable}
                   />
                   <Button aria-label="Send reply" disabled={!writable || busy}>
                     <Send size={17} />
                   </Button>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <select
+                    aria-label="Attachment type"
+                    className="input w-32 text-xs"
+                    value={replyKind}
+                    disabled={!writable}
+                    onChange={(e) =>
+                      setReplyKind(e.target.value as "image" | "document")
+                    }
+                  >
+                    <option value="document">Document</option>
+                    <option value="image">Image</option>
+                  </select>
+                  <Input
+                    aria-label="Attachment link"
+                    type="url"
+                    className="text-xs"
+                    placeholder="Optional https:// attachment link"
+                    value={replyMedia}
+                    disabled={!writable}
+                    onChange={(e) => setReplyMedia(e.target.value)}
+                  />
                 </div>
                 <p className="mt-2 text-[10px] text-slate-500">
                   Mock delivery. Replies require an open 24-hour service window

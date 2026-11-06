@@ -179,3 +179,20 @@ Verification on 6 November 2026 (manual access milestone):
 - Commands executed: pnpm build; pnpm typecheck; pnpm lint; pnpm test; pnpm test:integration; pnpm test:e2e; pnpm test:e2e --last-failed; pnpm db:migrate and pnpm db:seed against a disposable database.
 - Changed database migration/schema, shared entitlement logic, API/worker enforcement, admin assignment and tenant usage UI, integration/browser tests and handoff documentation.
 - Next executable milestone: official Meta provider contracts and signed webhook ingestion with mocked contract tests; preserve current engine and manual grants.
+
+## Completed milestone: media messages and remaining non-integration nodes
+
+- [x] Shared `mediaSchema` contract (public https links only, no credentials/local names/IP literals, safe filenames, 1024-character captions) for outbound, inbound and agent messages.
+- [x] Migration nine: nullable JSONB `media` on Message and InboundEvent; idempotency comparisons normalise JSONB key order.
+- [x] Send Image, Send Document, Save User Input, Keyword Match and Assign Agent nodes in shared validation, engine, builder library/properties and simulator.
+- [x] Publish/validate reject Assign Agent targets that are not current non-viewer members of the same workspace; the engine re-checks at run time.
+- [x] Inbox shows media as safe outbound links (no CSP widening), agents can attach a media link, inbox simulator can send a customer image link.
+- [x] Unit, integration (API + real worker) and browser tests; documentation and plain-language guide updated.
+
+Verification on 6 November 2026 (media/nodes milestone, cloud sandbox with Node 22.23 rather than the pinned Node 24, local PostgreSQL 16 and Redis instead of Compose; no Mailpit):
+- Fixed `pnpm-workspace.yaml`: two unanswered `allowBuilds` placeholders (`@scarf/scarf`, `msgpackr-extract`) made every pnpm script fail; both set to false (optional telemetry/native accelerator).
+- `pnpm build`, `pnpm typecheck`, `pnpm lint` passed. `pnpm test`: 34 unit tests passed. `pnpm test:integration`: 61 tests in 8 files passed. Playwright: all 10 browser cases passed (one earlier full run had a timing failure in the sign-out step of accounts.spec; it passed on two isolated reruns and the next full run).
+- Applied all nine migrations and the seed to a fresh disposable database (3 workspaces), then dropped it. `prisma migrate diff` against the schema reported no drift.
+- `pnpm test:worker` (real SMTP delivery) was not run: Mailpit was not available in this sandbox.
+- No live Meta connection, media upload, payment collection, public deployment or claim of Meta approval.
+- Next executable milestone: official Meta provider contracts and signed webhook ingestion (raw-body X-Hub-Signature-256, challenge GET, durable dedup, out-of-order statuses, phone_number_id tenant resolution) with mocked contract tests, mapping the new media payload to Graph API `image`/`document` link objects. Then the restricted HTTP node (SSRF-safe client) and remaining triggers.
